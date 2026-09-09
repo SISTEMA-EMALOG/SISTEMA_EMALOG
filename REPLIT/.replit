@@ -1,0 +1,25 @@
+modules = ["python-3.11", "postgresql-16"]
+
+[nix]
+channel = "stable-25_05"
+packages = ["freetype", "glibcLocales", "harfbuzz", "libjpeg", "libtiff", "libwebp", "mupdf", "openjpeg", "openssl", "postgresql", "zlib"]
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["gunicorn", "--bind=0.0.0.0:5000", "--reuse-port", "--worker-class=gthread", "--workers=1", "--threads=8", "--timeout=0", "main:app"]
+
+[workflows]
+runButton = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "gunicorn --bind 0.0.0.0:5000 --reuse-port --reload --worker-class=gthread --workers=1 --threads=8 --timeout=0 main:app"
+waitForPort = 5000
+
+[[ports]]
+localPort = 5000
+externalPort = 80

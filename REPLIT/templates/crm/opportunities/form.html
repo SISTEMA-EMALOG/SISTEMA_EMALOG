@@ -1,0 +1,344 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{% if opp %}Editar{% else %}Nova{% endif %} Oportunidade — CRM EMALOG{% endblock %}
+{% block page_title %}{% if opp %}Editar Oportunidade{% else %}Nova Oportunidade{% endif %}{% endblock %}
+{% block page_description %}Registrar negociação de frete{% endblock %}
+
+{% block header_actions %}
+<a href="{{ url_for('crm.pipeline') }}"
+   class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium transition">
+    <i class="fas fa-arrow-left mr-2"></i>Pipeline
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+    <form method="post" action="{{ url_for('crm.opp_new') }}" class="space-y-6" id="oppForm">
+        <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token','') }}">
+
+        {# Lead #}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <h3 class="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                <i class="fas fa-building text-blue-500"></i> Lead / Empresa
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Lead <span class="text-red-500">*</span></label>
+                    <select name="lead_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+                        <option value="">Selecionar lead...</option>
+                        {% for l in all_leads %}
+                        <option value="{{ l.id }}" {% if lead and lead.id == l.id %}selected{% endif %}>
+                            {{ l.company_name }}{% if l.city %} — {{ l.city }}{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Título da Oportunidade <span class="text-red-500">*</span></label>
+                    <input type="text" name="title" required
+                           value="{{ opp.title if opp else '' }}"
+                           placeholder="Ex: Coleta em fornecedor SP para cliente RJ – fracionado"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+            </div>
+        </div>
+
+        {# Estágio e valor #}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <h3 class="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                <i class="fas fa-chart-line text-green-500"></i> Estágio & Valor
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Estágio Inicial</label>
+                    <select name="stage" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+                        {% for sid, sname, _, _ in STAGES %}
+                        <option value="{{ sid }}"
+                            {% if opp and opp.stage == sid %}selected
+                            {% elif not opp and sid == 'prospeccao' %}selected
+                            {% endif %}>{{ sname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                {# Campo valor com máscara R$ #}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                        Valor do Frete (R$)
+                        <span class="text-xs text-gray-400 font-normal ml-1">— cotação solicitada</span>
+                    </label>
+                    <div class="relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium pointer-events-none">R$</span>
+                        <input type="text" id="value_display"
+                               value="{{ '{:,.2f}'.format(opp.value).replace(',','X').replace('.',',').replace('X','.') if opp and opp.value else '' }}"
+                               placeholder="0,00"
+                               autocomplete="off"
+                               class="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent text-right">
+                        <input type="hidden" name="value" id="value_hidden"
+                               value="{{ opp.value if opp and opp.value else '' }}">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Probabilidade (%)</label>
+                    <input type="number" name="probability" min="0" max="100"
+                           value="{{ opp.probability if opp else 10 }}"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Previsão de Fechamento</label>
+                    <input type="date" name="expected_close_date"
+                           value="{{ opp.expected_close_date.strftime('%Y-%m-%d') if opp and opp.expected_close_date else '' }}"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Responsável</label>
+                    <select name="assigned_to" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+                        {% for seller in sellers %}
+                        <option value="{{ seller.id }}"
+                            {% if opp and opp.assigned_to == seller.id %}selected
+                            {% elif not opp and seller.id == current_user.id %}selected
+                            {% endif %}>{{ seller.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        {# Detalhes do frete #}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <h3 class="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                <i class="fas fa-truck text-amber-500"></i> Detalhes da Rota
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                {# Origem com autocomplete IBGE #}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Cidade de Origem</label>
+                    <div class="relative city-autocomplete" data-field="freight_origin">
+                        <input type="text" id="freight_origin_input"
+                               value="{{ opp.freight_origin if opp else '' }}"
+                               placeholder="Digite o nome da cidade..."
+                               autocomplete="off"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8">
+                        <i class="fas fa-map-marker-alt absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs pointer-events-none"></i>
+                        <input type="hidden" name="freight_origin" id="freight_origin_value"
+                               value="{{ opp.freight_origin if opp else '' }}">
+                        <div id="freight_origin_dropdown"
+                             class="hidden absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto text-sm">
+                        </div>
+                    </div>
+                </div>
+
+                {# Destino com autocomplete IBGE #}
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Cidade de Destino</label>
+                    <div class="relative city-autocomplete" data-field="freight_destination">
+                        <input type="text" id="freight_destination_input"
+                               value="{{ opp.freight_destination if opp else '' }}"
+                               placeholder="Digite o nome da cidade..."
+                               autocomplete="off"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8">
+                        <i class="fas fa-flag-checkered absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs pointer-events-none"></i>
+                        <input type="hidden" name="freight_destination" id="freight_destination_value"
+                               value="{{ opp.freight_destination if opp else '' }}">
+                        <div id="freight_destination_dropdown"
+                             class="hidden absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto text-sm">
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de Carga</label>
+                    <input type="text" name="cargo_type"
+                           value="{{ opp.cargo_type if opp else '' }}"
+                           placeholder="Ex: Carga geral, frios, perigosa..."
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de Veículo</label>
+                    <select name="vehicle_type" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+                        <option value="">—</option>
+                        {% for v in VEHICLE_TYPES %}
+                        <option value="{{ v }}" {% if opp and opp.vehicle_type == v %}selected{% endif %}>{{ v }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Frequência Estimada</label>
+                    <select name="frequency" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+                        <option value="">—</option>
+                        {% for fid, fname in FREQUENCIES %}
+                        <option value="{{ fid }}" {% if opp and opp.frequency == fid %}selected{% endif %}>{{ fname }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+            <a href="{{ url_for('crm.pipeline') }}"
+               class="px-5 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium transition">
+                Cancelar
+            </a>
+            <button type="submit"
+                    class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition">
+                <i class="fas fa-save mr-2"></i>{% if opp %}Salvar Alterações{% else %}Criar Oportunidade{% endif %}
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Máscara de moeda R$ ────────────────────────────────────────────────────
+(function() {
+    const display = document.getElementById('value_display');
+    const hidden  = document.getElementById('value_hidden');
+    if (!display || !hidden) return;
+
+    function formatBRL(raw) {
+        // Remove tudo que não é dígito
+        let digits = raw.replace(/\D/g, '');
+        if (!digits) return '';
+        // Trata como centavos: 1000 → 10,00
+        let num = parseInt(digits, 10);
+        return (num / 100).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+
+    function toFloat(formatted) {
+        // '1.234,56' → 1234.56
+        return parseFloat(formatted.replace(/\./g, '').replace(',', '.')) || 0;
+    }
+
+    display.addEventListener('input', function() {
+        const formatted = formatBRL(this.value);
+        this.value  = formatted;
+        hidden.value = formatted ? toFloat(formatted) : '';
+    });
+
+    // Formatar valor existente ao carregar
+    if (display.value) {
+        const n = parseFloat(display.value.replace(',', '.'));
+        if (!isNaN(n)) {
+            display.value = n.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        }
+    }
+})();
+
+// ── Autocomplete de cidades brasileiras (IBGE) ─────────────────────────────
+(function() {
+    let citiesCache = null;   // [{label: 'São Paulo, SP', value: 'São Paulo, SP'}, ...]
+    let loadingPromise = null;
+
+    function loadCities() {
+        if (citiesCache) return Promise.resolve(citiesCache);
+        if (loadingPromise) return loadingPromise;
+        loadingPromise = fetch('https://servicodados.ibge.gov.br/api/v1/localidades/municipios?orderBy=nome')
+            .then(r => r.json())
+            .then(data => {
+                citiesCache = data.map(m => {
+                    const uf = m.microrregiao.mesorregiao.UF.sigla;
+                    return { label: `${m.nome}, ${uf}`, value: `${m.nome}, ${uf}` };
+                });
+                return citiesCache;
+            })
+            .catch(() => { citiesCache = []; return []; });
+        return loadingPromise;
+    }
+
+    function setupCityField(fieldName) {
+        const input    = document.getElementById(`${fieldName}_input`);
+        const hidden   = document.getElementById(`${fieldName}_value`);
+        const dropdown = document.getElementById(`${fieldName}_dropdown`);
+        if (!input || !dropdown) return;
+
+        let activeIdx = -1;
+
+        function showDropdown(items) {
+            activeIdx = -1;
+            dropdown.innerHTML = '';
+            if (!items.length) { dropdown.classList.add('hidden'); return; }
+            items.slice(0, 50).forEach((item, i) => {
+                const div = document.createElement('div');
+                div.className = 'px-3 py-2 cursor-pointer hover:bg-blue-50 text-gray-700';
+                div.textContent = item.label;
+                div.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    selectItem(item);
+                });
+                dropdown.appendChild(div);
+            });
+            dropdown.classList.remove('hidden');
+        }
+
+        function selectItem(item) {
+            input.value  = item.label;
+            hidden.value = item.value;
+            dropdown.classList.add('hidden');
+            activeIdx = -1;
+        }
+
+        function filterCities(q) {
+            if (!citiesCache) return [];
+            const lower = q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            return citiesCache.filter(c => {
+                const norm = c.label.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                return norm.includes(lower);
+            });
+        }
+
+        input.addEventListener('focus', () => {
+            // Pré-carregar lista em background
+            loadCities();
+        });
+
+        let debounceTimer;
+        input.addEventListener('input', function() {
+            const q = this.value.trim();
+            hidden.value = q; // permite valor livre também
+            clearTimeout(debounceTimer);
+            if (q.length < 2) { dropdown.classList.add('hidden'); return; }
+            debounceTimer = setTimeout(() => {
+                loadCities().then(cities => {
+                    showDropdown(filterCities(q));
+                });
+            }, 120);
+        });
+
+        input.addEventListener('keydown', function(e) {
+            const items = dropdown.querySelectorAll('div');
+            if (!items.length) return;
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                activeIdx = Math.min(activeIdx + 1, items.length - 1);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                activeIdx = Math.max(activeIdx - 1, 0);
+            } else if (e.key === 'Enter' && activeIdx >= 0) {
+                e.preventDefault();
+                items[activeIdx].dispatchEvent(new MouseEvent('mousedown'));
+                return;
+            } else if (e.key === 'Escape') {
+                dropdown.classList.add('hidden');
+                return;
+            }
+            items.forEach((el, i) => {
+                el.classList.toggle('bg-blue-50', i === activeIdx);
+                el.classList.toggle('text-blue-700', i === activeIdx);
+                if (i === activeIdx) el.scrollIntoView({block: 'nearest'});
+            });
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+                dropdown.classList.add('hidden');
+            }
+        });
+    }
+
+    setupCityField('freight_origin');
+    setupCityField('freight_destination');
+})();
+</script>
+{% endblock %}

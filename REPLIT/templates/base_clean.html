@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full bg-gray-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}EMALOG - Sistema de Gestão Logística{% endblock %}</title>
+    
+    <!-- Preconnect para CDNs -->
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="dns-prefetch" href="https://cdn.tailwindcss.com">
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" crossorigin="anonymous">
+
+    <!-- TailwindCSS Play CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#1e40af',
+                        'primary-dark': '#1e3a8a',
+                        'primary-light': '#3b82f6'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    
+    {% block head %}{% endblock %}
+</head>
+<body class="h-full">
+    <div class="min-h-full">
+        <!-- Flash messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="fixed top-4 right-4 z-50 space-y-2">
+                    {% for category, message in messages %}
+                        <div class="flash-message alert alert-{{ 'danger' if category == 'error' else category }} bg-{{ 'red' if category == 'error' else ('green' if category == 'success' else ('yellow' if category == 'warning' else 'blue')) }}-50 border border-{{ 'red' if category == 'error' else ('green' if category == 'success' else ('yellow' if category == 'warning' else 'blue')) }}-200 text-{{ 'red' if category == 'error' else ('green' if category == 'success' else ('yellow' if category == 'warning' else 'blue')) }}-800 px-4 py-3 rounded relative max-w-sm">
+                            <span class="block">{{ message }}</span>
+                            <button class="absolute top-0 bottom-0 right-0 px-2 py-3" onclick="this.parentElement.style.display='none'">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        
+        <!-- Main content area - only one content block -->
+        {% block content %}{% endblock %}
+    </div>
+    
+    <!-- Scripts -->
+    <script>
+        // Auto-hide flash messages after 5 seconds
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() {
+                const messages = document.querySelectorAll('.flash-message');
+                messages.forEach(function(message) {
+                    message.style.display = 'none';
+                });
+            }, 5000);
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

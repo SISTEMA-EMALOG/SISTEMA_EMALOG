@@ -1,0 +1,587 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}{{ 'Editar' if client else 'Novo' }} Cliente - EMALOG{% endblock %}
+{% block page_title %}{{ 'Editar' if client else 'Novo' }} Cliente{% endblock %}
+{% block page_description %}{{ 'Edição de dados' if client else 'Cadastro de novo cliente' }} com integração CNPJ{% endblock %}
+
+{% block header_actions %}
+<div class="flex space-x-3">
+    <a href="{{ url_for('clients.index') }}" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition text-sm">
+        <i class="fas fa-arrow-left mr-2"></i>Voltar
+    </a>
+    {% if client and current_user.role in ['admin', 'operador', 'vendedor'] %}
+    <a href="{{ url_for('client_users.admin_list', client_id=client.id) }}"
+       class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm">
+        <i class="fas fa-users mr-2"></i>Gerenciar Usuários
+    </a>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+{% if client and current_user.role in ['admin', 'operador', 'vendedor'] %}
+<div class="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
+    <div>
+        <p class="text-sm font-semibold text-blue-800">Usuários com acesso a este cliente</p>
+        {% set user_count = client.users|length if client.users is defined else 0 %}
+        <p class="text-xs text-blue-600">Gerencie quem pode visualizar dados deste cliente no portal</p>
+    </div>
+    <a href="{{ url_for('client_users.admin_list', client_id=client.id) }}"
+       class="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+        <i class="fas fa-user-cog mr-2"></i>Gerenciar Acessos
+    </a>
+</div>
+{% endif %}
+<form method="POST">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Company Information -->
+        <div class="space-y-6">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Dados da Empresa</h3>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">CNPJ *</label>
+                        <div class="relative">
+                            <input type="text" name="cnpj" id="cnpj" value="{{ client.cnpj if client }}" required
+                                   autocomplete="off"
+                                   class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 focus:outline-none focus:ring-primary focus:border-primary"
+                                   placeholder="00.000.000/0000-00" maxlength="18"
+                                   {{ 'readonly' if client }} onblur="fetchCNPJData()">
+                            <div id="cnpj-loading" class="absolute inset-y-0 right-0 pr-3 flex items-center hidden">
+                                <i class="fas fa-spinner fa-spin text-gray-400"></i>
+                            </div>
+                        </div>
+                        <div id="cnpj-validation" class="mt-1 text-sm"></div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Razão Social *</label>
+                        <input type="text" name="company_name" value="{{ client.company_name if client }}" required
+                               id="company_name"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Nome Fantasia</label>
+                        <input type="text" name="trade_name" id="trade_name" value="{{ client.trade_name if client }}"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Telefone *</label>
+                        <input type="tel" name="phone" value="{{ client.phone if client }}" required
+                               autocomplete="tel"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary"
+                               data-mask="(00) 0000-0000">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">E-mail Principal *</label>
+                        <input type="email" name="email" value="{{ client.email if client }}" required
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Logradouro *</label>
+                            <input type="text" name="street" id="street" value="{{ client.street if client }}" required
+                                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Número</label>
+                            <input type="text" name="number" id="number" value="{{ client.number if client }}"
+                                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Complemento</label>
+                            <input type="text" name="complement" id="complement" value="{{ client.complement if client }}"
+                                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Bairro *</label>
+                            <input type="text" name="neighborhood" id="neighborhood" value="{{ client.neighborhood if client }}" required
+                                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Cidade *</label>
+                            <input type="text" name="city" id="city" value="{{ client.city if client }}" required
+                                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Estado *</label>
+                            <select name="state" id="state" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                                <option value="">Selecione...</option>
+                                <option value="AC" {{ 'selected' if client and client.state == 'AC' }}>Acre</option>
+                                <option value="AL" {{ 'selected' if client and client.state == 'AL' }}>Alagoas</option>
+                                <option value="AP" {{ 'selected' if client and client.state == 'AP' }}>Amapá</option>
+                                <option value="AM" {{ 'selected' if client and client.state == 'AM' }}>Amazonas</option>
+                                <option value="BA" {{ 'selected' if client and client.state == 'BA' }}>Bahia</option>
+                                <option value="CE" {{ 'selected' if client and client.state == 'CE' }}>Ceará</option>
+                                <option value="DF" {{ 'selected' if client and client.state == 'DF' }}>Distrito Federal</option>
+                                <option value="ES" {{ 'selected' if client and client.state == 'ES' }}>Espírito Santo</option>
+                                <option value="GO" {{ 'selected' if client and client.state == 'GO' }}>Goiás</option>
+                                <option value="MA" {{ 'selected' if client and client.state == 'MA' }}>Maranhão</option>
+                                <option value="MT" {{ 'selected' if client and client.state == 'MT' }}>Mato Grosso</option>
+                                <option value="MS" {{ 'selected' if client and client.state == 'MS' }}>Mato Grosso do Sul</option>
+                                <option value="MG" {{ 'selected' if client and client.state == 'MG' }}>Minas Gerais</option>
+                                <option value="PA" {{ 'selected' if client and client.state == 'PA' }}>Pará</option>
+                                <option value="PB" {{ 'selected' if client and client.state == 'PB' }}>Paraíba</option>
+                                <option value="PR" {{ 'selected' if client and client.state == 'PR' }}>Paraná</option>
+                                <option value="PE" {{ 'selected' if client and client.state == 'PE' }}>Pernambuco</option>
+                                <option value="PI" {{ 'selected' if client and client.state == 'PI' }}>Piauí</option>
+                                <option value="RJ" {{ 'selected' if client and client.state == 'RJ' }}>Rio de Janeiro</option>
+                                <option value="RN" {{ 'selected' if client and client.state == 'RN' }}>Rio Grande do Norte</option>
+                                <option value="RS" {{ 'selected' if client and client.state == 'RS' }}>Rio Grande do Sul</option>
+                                <option value="RO" {{ 'selected' if client and client.state == 'RO' }}>Rondônia</option>
+                                <option value="RR" {{ 'selected' if client and client.state == 'RR' }}>Roraima</option>
+                                <option value="SC" {{ 'selected' if client and client.state == 'SC' }}>Santa Catarina</option>
+                                <option value="SP" {{ 'selected' if client and client.state == 'SP' }}>São Paulo</option>
+                                <option value="SE" {{ 'selected' if client and client.state == 'SE' }}>Sergipe</option>
+                                <option value="TO" {{ 'selected' if client and client.state == 'TO' }}>Tocantins</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">CEP *</label>
+                            <input type="text" name="cep" id="cep" value="{{ client.cep if client }}" required
+                                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary"
+                                   placeholder="00000-000" maxlength="9">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Contacts -->
+        <div class="space-y-6">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Contatos Responsáveis</h3>
+                <div id="contacts-container">
+                    {% if client and parsed_contacts %}
+                        {% for contact in parsed_contacts %}
+                        <div class="contact-group mb-4 p-4 border border-gray-200 rounded-lg">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="text-sm font-medium text-gray-700">Contato {{ loop.index }}</h4>
+                                <button type="button" onclick="removeContact(this)" class="text-red-600 hover:text-red-800" aria-label="Remover contato {{ loop.index }}">
+                                    <i class="fas fa-times" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <div class="grid grid-cols-1 gap-3">
+                                <label class="sr-only" for="contact_name_{{ loop.index }}">Nome do contato {{ loop.index }}</label>
+                                <input type="text" id="contact_name_{{ loop.index }}" name="contact_name_{{ loop.index }}" value="{{ contact.name }}" placeholder="Nome…"
+                                       autocomplete="name"
+                                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                                <label class="sr-only" for="contact_email_{{ loop.index }}">E-mail do contato {{ loop.index }}</label>
+                                <input type="email" id="contact_email_{{ loop.index }}" name="contact_email_{{ loop.index }}" value="{{ contact.email }}" placeholder="E-mail…"
+                                       autocomplete="email"
+                                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                                <label class="sr-only" for="contact_phone_{{ loop.index }}">Telefone do contato {{ loop.index }}</label>
+                                <input type="tel" id="contact_phone_{{ loop.index }}" name="contact_phone_{{ loop.index }}" value="{{ contact.phone }}" placeholder="Telefone…"
+                                       autocomplete="tel"
+                                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                                <label class="sr-only" for="contact_position_{{ loop.index }}">Cargo do contato {{ loop.index }}</label>
+                                <input type="text" id="contact_position_{{ loop.index }}" name="contact_position_{{ loop.index }}" value="{{ contact.position }}" placeholder="Cargo…"
+                                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="contact-group mb-4 p-4 border border-gray-200 rounded-lg">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="text-sm font-medium text-gray-700">Contato 1</h4>
+                                <button type="button" onclick="removeContact(this)" class="text-red-600 hover:text-red-800" aria-label="Remover contato 1">
+                                    <i class="fas fa-times" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <div class="grid grid-cols-1 gap-3">
+                                <label class="sr-only" for="contact_name_1">Nome do contato 1</label>
+                                <input type="text" id="contact_name_1" name="contact_name_1" placeholder="Nome…"
+                                       autocomplete="name"
+                                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                                <label class="sr-only" for="contact_email_1">E-mail do contato 1</label>
+                                <input type="email" id="contact_email_1" name="contact_email_1" placeholder="E-mail…"
+                                       autocomplete="email"
+                                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                                <label class="sr-only" for="contact_phone_1">Telefone do contato 1</label>
+                                <input type="tel" id="contact_phone_1" name="contact_phone_1" placeholder="Telefone…"
+                                       autocomplete="tel"
+                                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                                <label class="sr-only" for="contact_position_1">Cargo do contato 1</label>
+                                <input type="text" id="contact_position_1" name="contact_position_1" placeholder="Cargo…"
+                                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <button type="button" onclick="addContact()" class="mt-4 inline-flex items-center px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+                    <i class="fas fa-plus mr-2"></i>Adicionar Contato
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Form Actions -->
+    <div class="mt-8 flex flex-wrap justify-end gap-3">
+        <a href="{{ url_for('clients.index') }}" 
+           class="inline-flex items-center px-6 py-2 text-sm font-medium border border-gray-300 rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors">
+            Cancelar
+        </a>
+        <button type="submit" 
+                class="inline-flex items-center px-6 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+            {{ 'Atualizar' if client else 'Cadastrar' }} Cliente
+        </button>
+    </div>
+</form>
+
+{% if client and current_user.role in ['admin', 'operador', 'vendedor'] %}
+<!-- ── Usuários do Portal ──────────────────────────────────────────── -->
+<div class="mt-8 bg-white rounded-lg shadow overflow-hidden">
+    <div class="px-6 py-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <div>
+            <h3 class="text-lg font-medium text-gray-900">
+                <i class="fas fa-users text-blue-600 mr-2"></i>Usuários do Portal
+            </h3>
+            <p class="text-xs text-gray-500 mt-0.5">Usuários que acessam o portal para visualizar dados deste cliente (máx. 5)</p>
+        </div>
+        {% if (client_users|length if client_users else 0) < 5 %}
+        <button onclick="document.getElementById('inlineNewUserModal').classList.remove('hidden')"
+                class="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+            <i class="fas fa-user-plus mr-2"></i>Novo Usuário
+        </button>
+        {% else %}
+        <span class="text-xs text-orange-600 font-medium bg-orange-50 px-3 py-1 rounded-full">Limite de 5 usuários atingido</span>
+        {% endif %}
+    </div>
+
+    {% if client_users %}
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 text-sm">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usuário</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Último Acesso</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for u in client_users %}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-5 py-3">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-user text-blue-600 text-xs"></i>
+                            </div>
+                            <div>
+                                <p class="font-medium text-gray-900">{{ u.username }}</p>
+                                <p class="text-xs text-gray-500">{{ u.email }}</p>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-5 py-3">
+                        <span class="px-2 py-0.5 rounded-full text-xs font-semibold
+                            {{ 'bg-green-100 text-green-800' if u.active else 'bg-red-100 text-red-800' }}">
+                            {{ 'Ativo' if u.active else 'Inativo' }}
+                        </span>
+                        {% if u.must_change_password %}
+                        <span class="ml-1 px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">Deve trocar senha</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-5 py-3 text-gray-600">
+                        {{ u.last_login.strftime('%d/%m/%Y %H:%M') if u.last_login else 'Nunca acessou' }}
+                    </td>
+                    <td class="px-5 py-3">
+                        <div class="flex gap-3">
+                            <button onclick="inlineResetPassword({{ u.id }}, '{{ u.username }}')"
+                                    title="Resetar senha" class="text-orange-500 hover:text-orange-700">
+                                <i class="fas fa-key"></i>
+                            </button>
+                            <button onclick="inlineToggleStatus({{ u.id }}, '{{ u.username }}', {{ u.active|tojson }})"
+                                    title="{{ 'Desativar' if u.active else 'Ativar' }}"
+                                    class="{{ 'text-red-500 hover:text-red-700' if u.active else 'text-green-500 hover:text-green-700' }}">
+                                <i class="fas fa-{{ 'ban' if u.active else 'check-circle' }}"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="px-6 py-10 text-center">
+        <i class="fas fa-user-slash text-gray-300 text-4xl mb-3"></i>
+        <p class="text-gray-500 text-sm mb-4">Nenhum usuário do portal cadastrado para este cliente.</p>
+        <button onclick="document.getElementById('inlineNewUserModal').classList.remove('hidden')"
+                class="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm">
+            <i class="fas fa-user-plus mr-2"></i>Criar Primeiro Usuário
+        </button>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Modal Novo Usuário -->
+<div id="inlineNewUserModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-[9999] hidden" role="dialog" aria-modal="true" aria-labelledby="newUserModalTitle" style="overscroll-behavior: contain;">
+    <div class="relative top-20 mx-auto p-0 w-full max-w-md shadow-2xl rounded-xl overflow-hidden">
+        <div class="bg-blue-600 px-6 py-4 flex items-center justify-between">
+            <h3 id="newUserModalTitle" class="text-white font-semibold text-lg">
+                <i class="fas fa-user-plus mr-2" aria-hidden="true"></i>Novo Usuário — {{ client.company_name }}
+            </h3>
+            <button onclick="document.getElementById('inlineNewUserModal').classList.add('hidden')"
+                    class="text-blue-200 hover:text-white" aria-label="Fechar modal">
+                <i class="fas fa-times text-xl" aria-hidden="true"></i>
+            </button>
+        </div>
+        <div class="bg-white p-6">
+            <form method="POST" action="{{ url_for('client_users.admin_new', client_id=client.id) }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="_back" value="{{ url_for('clients.edit', id=client.id) }}">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Nome de Usuário <span class="text-red-500">*</span></label>
+                    <input type="text" name="username" required autofocus
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           placeholder="nome.sobrenome">
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">E-mail <span class="text-red-500">*</span></label>
+                    <input type="email" name="email" required
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           placeholder="usuario@empresa.com.br">
+                </div>
+                <div class="mb-5 bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-700">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    Senha padrão: <strong>EMALOG{{ current_year }}</strong>. O usuário deverá alterá-la no primeiro login.
+                </div>
+                <div class="flex gap-3">
+                    <button type="submit" class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition font-medium">
+                        <i class="fas fa-save mr-2"></i>Criar Usuário
+                    </button>
+                    <button type="button"
+                            onclick="document.getElementById('inlineNewUserModal').classList.add('hidden')"
+                            class="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Máscara para CNPJ
+function formatCNPJ(value) {
+    return value.replace(/\D/g, '')
+        .replace(/^(\d{2})(\d)/, '$1.$2')
+        .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+        .replace(/\.(\d{3})(\d)/, '.$1/$2')
+        .replace(/(\d{4})(\d)/, '$1-$2');
+}
+
+// Máscara para CEP
+function formatCEP(value) {
+    return value.replace(/\D/g, '').replace(/^(\d{5})(\d)/, '$1-$2');
+}
+
+// Máscara para telefone
+function formatPhone(value) {
+    value = value.replace(/\D/g, '');
+    if (value.length <= 10) {
+        return value.replace(/^(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
+    } else {
+        return value.replace(/^(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
+    }
+}
+
+// Aplicar máscaras
+document.getElementById('cnpj').addEventListener('input', function(e) {
+    e.target.value = formatCNPJ(e.target.value);
+});
+
+document.getElementById('cep').addEventListener('input', function(e) {
+    e.target.value = formatCEP(e.target.value);
+});
+
+document.querySelector('input[name="phone"]').addEventListener('input', function(e) {
+    e.target.value = formatPhone(e.target.value);
+});
+
+let contactCounter = {{ client.parsed_contacts|length if client and client.parsed_contacts else 1 }};
+
+function addContact() {
+    contactCounter++;
+    const container = document.getElementById('contacts-container');
+    const contactDiv = document.createElement('div');
+    contactDiv.className = 'contact-group mb-4 p-4 border border-gray-200 rounded-lg';
+    contactDiv.innerHTML = `
+        <div class="flex justify-between items-center mb-2">
+            <h4 class="text-sm font-medium text-gray-700">Contato ${contactCounter}</h4>
+            <button type="button" onclick="removeContact(this)" class="text-red-600 hover:text-red-800" aria-label="Remover contato ${contactCounter}">
+                <i class="fas fa-times" aria-hidden="true"></i>
+            </button>
+        </div>
+        <div class="grid grid-cols-1 gap-3">
+            <label class="sr-only" for="contact_name_${contactCounter}">Nome do contato ${contactCounter}</label>
+            <input type="text" id="contact_name_${contactCounter}" name="contact_name_${contactCounter}" placeholder="Nome…" required autocomplete="name"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+            <label class="sr-only" for="contact_email_${contactCounter}">E-mail do contato ${contactCounter}</label>
+            <input type="email" id="contact_email_${contactCounter}" name="contact_email_${contactCounter}" placeholder="E-mail…" required autocomplete="email"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+            <label class="sr-only" for="contact_phone_${contactCounter}">Telefone do contato ${contactCounter}</label>
+            <input type="tel" id="contact_phone_${contactCounter}" name="contact_phone_${contactCounter}" placeholder="Telefone…" autocomplete="tel"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+            <label class="sr-only" for="contact_position_${contactCounter}">Cargo do contato ${contactCounter}</label>
+            <input type="text" id="contact_position_${contactCounter}" name="contact_position_${contactCounter}" placeholder="Cargo/Posição…"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+        </div>
+    `;
+    container.appendChild(contactDiv);
+    
+    // Apply phone mask to new input
+    const phoneInput = contactDiv.querySelector(`input[name="contact_phone_${contactCounter}"]`);
+    phoneInput.addEventListener('input', function(e) {
+        e.target.value = formatPhone(e.target.value);
+    });
+}
+
+function removeContact(button) {
+    button.closest('.contact-group').remove();
+}
+
+// Função para buscar dados do CNPJ
+async function fetchCNPJData() {
+    const cnpjInput = document.getElementById('cnpj');
+    const cnpj = cnpjInput.value.replace(/\D/g, '');
+    
+    if (cnpj.length !== 14) {
+        showCNPJMessage('CNPJ deve ter 14 dígitos', 'error');
+        return;
+    }
+    
+    if (!validateCNPJ(cnpj)) {
+        return;
+    }
+    
+    // Show loading
+    document.getElementById('cnpj-loading').classList.remove('hidden');
+    showCNPJMessage('Buscando dados...', 'info');
+    
+    try {
+        const response = await fetch(`/clients/api/cnpj/${cnpj}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            // Preencher campos automaticamente
+            document.getElementById('company_name').value = data.data.nome || '';
+            document.getElementById('trade_name').value = data.data.fantasia || '';
+            document.getElementById('street').value = data.data.logradouro || '';
+            document.getElementById('number').value = data.data.numero || '';
+            document.getElementById('neighborhood').value = data.data.bairro || '';
+            document.getElementById('city').value = data.data.municipio || '';
+            document.getElementById('state').value = data.data.uf || '';
+            document.getElementById('cep').value = data.data.cep ? formatCEP(data.data.cep) : '';
+            
+            // Se não tem telefone preenchido, usar o da receita
+            const phoneInput = document.querySelector('input[name="phone"]');
+            if (!phoneInput.value && data.data.telefone) {
+                phoneInput.value = formatPhone(data.data.telefone);
+            }
+            
+            showCNPJMessage('Dados preenchidos automaticamente!', 'success');
+        } else {
+            showCNPJMessage(data.message || 'Erro ao buscar dados do CNPJ', 'error');
+        }
+    } catch (error) {
+        console.error('Erro ao buscar CNPJ:', error);
+        showCNPJMessage('Erro ao conectar com o serviço de CNPJ', 'error');
+    } finally {
+        document.getElementById('cnpj-loading').classList.add('hidden');
+    }
+}
+
+// Validação de CNPJ
+function validateCNPJ(cnpj) {
+    cnpj = cnpj.replace(/\D/g, '');
+    
+    if (cnpj.length !== 14) return false;
+    
+    // Elimina CNPJs inválidos conhecidos
+    if (/^(\d)\1+$/.test(cnpj)) return false;
+    
+    // Valida DVs
+    let tamanho = cnpj.length - 2;
+    let numeros = cnpj.substring(0, tamanho);
+    let digitos = cnpj.substring(tamanho);
+    let soma = 0;
+    let pos = tamanho - 7;
+    
+    for (let i = tamanho; i >= 1; i--) {
+        soma += numeros.charAt(tamanho - i) * pos--;
+        if (pos < 2) pos = 9;
+    }
+    
+    let resultado = soma % 11 < 2 ? 0 : 11 - soma % 11;
+    if (resultado != digitos.charAt(0)) return false;
+    
+    tamanho = tamanho + 1;
+    numeros = cnpj.substring(0, tamanho);
+    soma = 0;
+    pos = tamanho - 7;
+    
+    for (let i = tamanho; i >= 1; i--) {
+        soma += numeros.charAt(tamanho - i) * pos--;
+        if (pos < 2) pos = 9;
+    }
+    
+    resultado = soma % 11 < 2 ? 0 : 11 - soma % 11;
+    if (resultado != digitos.charAt(1)) return false;
+    
+    return true;
+}
+
+function showCNPJMessage(message, type) {
+    const div = document.getElementById('cnpj-validation');
+    div.textContent = message;
+    div.className = `mt-1 text-sm ${
+        type === 'error' ? 'text-red-600' : 
+        type === 'success' ? 'text-green-600' : 
+        'text-blue-600'
+    }`;
+}
+
+{% if client and current_user.role in ['admin', 'operador', 'vendedor'] %}
+function inlineToggleStatus(userId, username, isActive) {
+    const action = isActive ? 'desativar' : 'ativar';
+    if (!confirm(`Deseja ${action} o usuário "${username}"?`)) return;
+    fetch(`/client/users/admin/{{ client.id }}/user/${userId}/toggle`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.success) { location.reload(); }
+            else { alert('Erro: ' + d.message); }
+        })
+        .catch(() => alert('Erro de conexão.'));
+}
+
+function inlineResetPassword(userId, username) {
+    if (!confirm(`Resetar senha de "${username}"?\n\nUma senha padrão será gerada automaticamente.`)) return;
+    fetch(`/client/users/admin/{{ client.id }}/user/${userId}/reset-password`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.success) {
+                alert(`✅ Senha resetada com sucesso!\n\nNova senha: ${d.password}\n\nO usuário deve alterá-la no próximo login.`);
+            } else {
+                alert('Erro: ' + d.message);
+            }
+        })
+        .catch(() => alert('Erro de conexão.'));
+}
+
+// Fechar modal ao clicar fora
+document.getElementById('inlineNewUserModal').addEventListener('click', function(e) {
+    if (e.target === this) this.classList.add('hidden');
+});
+{% endif %}
+</script>
+{% endblock %}

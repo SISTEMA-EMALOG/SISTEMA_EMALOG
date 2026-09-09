@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Novo Pagamento - EMALOG{% endblock %}
+{% block page_title %}Registrar Pagamento{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <form method="POST" class="bg-white rounded-lg shadow p-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Motorista *</label>
+                <select name="driver_id" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                    <option value="">Selecione o motorista</option>
+                    {% for driver in drivers %}
+                    <option value="{{ driver.id }}">{{ driver.name }} - {{ driver.phone }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de Pagamento *</label>
+                <select name="payment_type" required class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                    <option value="">Selecione o tipo</option>
+                    <option value="adiantamento">Adiantamento</option>
+                    <option value="pagamento">Pagamento</option>
+                    <option value="desconto">Desconto</option>
+                </select>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Valor (R$) *</label>
+                <input type="number" name="amount" required step="0.01" min="0"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary"
+                       placeholder="0,00">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Data do Pagamento *</label>
+                <input type="date" name="payment_date" required value="{{ moment().strftime('%Y-%m-%d') }}"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Frete Relacionado</label>
+                <select name="freight_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary">
+                    <option value="">Nenhum frete específico</option>
+                    {% for freight in freights %}
+                    <option value="{{ freight.id }}">{{ freight.freight_number }} - R$ {{ "%.2f"|format(freight.agreed_price) }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
+                <textarea name="description" rows="3"
+                          class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-primary focus:border-primary"
+                          placeholder="Descrição adicional do pagamento"></textarea>
+            </div>
+        </div>
+        
+        <div class="mt-8 flex justify-end space-x-3">
+            <a href="{{ url_for('financial.index') }}" 
+               class="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition">
+                Cancelar
+            </a>
+            <button type="submit" 
+                    class="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition">
+                Registrar Pagamento
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

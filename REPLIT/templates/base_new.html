@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full bg-gray-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}EMALOG - Sistema de Gestão Logística{% endblock %}</title>
+    
+    <!-- Preconnect para CDNs -->
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="dns-prefetch" href="https://cdn.tailwindcss.com">
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" crossorigin="anonymous">
+
+    <!-- TailwindCSS Play CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#1e40af',
+                        'primary-dark': '#1e3a8a',
+                        'primary-light': '#3b82f6'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Chart.js for dashboards -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Socket.IO for chat -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    
+    {% block head %}{% endblock %}
+</head>
+<body class="h-full">
+    <div class="min-h-full">
+        {% if current_user.is_authenticated %}
+        <!-- Authenticated Layout -->
+        <div class="flex h-screen bg-gray-50">
+            <!-- Sidebar -->
+            <div class="fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform -translate-x-full lg:translate-x-0 transition-transform duration-200 ease-in-out" id="sidebar">
+                <div class="flex flex-col h-full">
+                    <!-- Logo -->
+                    <div class="flex items-center justify-center h-16 bg-gradient-to-r from-primary to-primary-light">
+                        <h1 class="text-white text-xl font-bold">EMALOG</h1>
+                    </div>
+                    
+                    <!-- Navigation -->
+                    <nav class="flex-1 px-4 py-6 space-y-2">
+                        <a href="{{ url_for('dashboard.index') }}" class="nav-link group flex items-center px-3 py-2 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 hover:text-primary {{ 'bg-primary-light text-white' if request.endpoint == 'dashboard.index' }}">
+                            <i class="fas fa-tachometer-alt mr-3 text-gray-400 group-hover:text-primary {{ 'text-white' if request.endpoint == 'dashboard.index' }}"></i>
+                            Dashboard
+                        </a>
+                        
+                        {% if current_user.role in ['admin', 'operador', 'vendedor'] %}
+                        <a href="{{ url_for('drivers.index') }}" class="nav-link group flex items-center px-3 py-2 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 hover:text-primary {{ 'bg-primary-light text-white' if request.endpoint.startswith('drivers') }}">
+                            <i class="fas fa-truck mr-3 text-gray-400 group-hover:text-primary {{ 'text-white' if request.endpoint.startswith('drivers') }}"></i>
+                            Motoristas
+                        </a>
+                        
+                        <a href="{{ url_for('clients.index') }}" class="nav-link group flex items-center px-3 py-2 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 hover:text-primary {{ 'bg-primary-light text-white' if request.endpoint.startswith('clients') }}">
+                            <i class="fas fa-building mr-3 text-gray-400 group-hover:text-primary {{ 'text-white' if request.endpoint.startswith('clients') }}"></i>
+                            Clientes
+                        </a>
+                        {% endif %}
+                        
+                        <a href="{{ url_for('quotes.index') }}" class="nav-link group flex items-center px-3 py-2 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 hover:text-primary {{ 'bg-primary-light text-white' if request.endpoint.startswith('quotes') }}">
+                            <i class="fas fa-file-invoice mr-3 text-gray-400 group-hover:text-primary {{ 'text-white' if request.endpoint.startswith('quotes') }}"></i>
+                            Cotações
+                        </a>
+                        
+                        <a href="{{ url_for('freight.index') }}" class="nav-link group flex items-center px-3 py-2 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 hover:text-primary {{ 'bg-primary-light text-white' if request.endpoint.startswith('freight') }}">
+                            <i class="fas fa-shipping-fast mr-3 text-gray-400 group-hover:text-primary {{ 'text-white' if request.endpoint.startswith('freight') }}"></i>
+                            Fretes
+                        </a>
+                        
+                        {% if current_user.role in ['admin', 'operador', 'vendedor'] %}
+                        <a href="{{ url_for('financial.index') }}" class="nav-link group flex items-center px-3 py-2 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 hover:text-primary {{ 'bg-primary-light text-white' if request.endpoint.startswith('financial') }}">
+                            <i class="fas fa-dollar-sign mr-3 text-gray-400 group-hover:text-primary {{ 'text-white' if request.endpoint.startswith('financial') }}"></i>
+                            Financeiro
+                        </a>
+                        
+                        <a href="{{ url_for('reports.index') }}" class="nav-link group flex items-center px-3 py-2 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 hover:text-primary {{ 'bg-primary-light text-white' if request.endpoint.startswith('reports') }}">
+                            <i class="fas fa-chart-bar mr-3 text-gray-400 group-hover:text-primary {{ 'text-white' if request.endpoint.startswith('reports') }}"></i>
+                            Relatórios
+                        </a>
+                        {% endif %}
+                        
+                        <a href="{{ url_for('chat.index') }}" class="nav-link group flex items-center px-3 py-2 text-sm font-medium text-gray-700 rounded-md hover:bg-gray-100 hover:text-primary {{ 'bg-primary-light text-white' if request.endpoint.startswith('chat') }}">
+                            <i class="fas fa-comments mr-3 text-gray-400 group-hover:text-primary {{ 'text-white' if request.endpoint.startswith('chat') }}"></i>
+                            Chat
+                        </a>
+                    </nav>
+                    
+                    <!-- User Menu -->
+                    <div class="flex-shrink-0 p-4 border-t border-gray-200">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0">
+                                <div class="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
+                                    <span class="text-sm font-medium text-white">{{ current_user.username[0].upper() }}</span>
+                                </div>
+                            </div>
+                            <div class="ml-3 flex-1 min-w-0">
+                                <p class="text-sm font-medium text-gray-900 truncate">{{ current_user.username }}</p>
+                                <p class="text-xs text-gray-500 truncate">{{ current_user.role.title() }}</p>
+                            </div>
+                            <div class="ml-2">
+                                <div class="relative">
+                                    <button type="button" class="flex-shrink-0 bg-white p-1 text-gray-400 hover:text-gray-500" onclick="toggleUserMenu()">
+                                        <i class="fas fa-ellipsis-v"></i>
+                                    </button>
+                                    <div id="userMenu" class="hidden absolute right-0 bottom-10 w-48 bg-white rounded-md shadow-lg py-1 z-50">
+                                        <a href="{{ url_for('auth.change_password') }}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                            <i class="fas fa-key mr-2"></i>Alterar Senha
+                                        </a>
+                                        <a href="{{ url_for('auth.logout') }}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                            <i class="fas fa-sign-out-alt mr-2"></i>Sair
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Main content -->
+            <div class="flex-1 lg:ml-64 flex flex-col overflow-hidden">
+                <!-- Header -->
+                <div class="bg-white shadow-sm border-b border-gray-200">
+                    <div class="px-4 sm:px-6 lg:px-8">
+                        <div class="flex justify-between h-16">
+                            <div class="flex items-center">
+                                <button type="button" class="lg:hidden -ml-2 mr-3 h-12 w-12 inline-flex items-center justify-center rounded-md text-gray-500 hover:text-gray-900" onclick="toggleSidebar()">
+                                    <i class="fas fa-bars"></i>
+                                </button>
+                                <div>
+                                    <h1 class="text-lg font-medium text-gray-900">{% block page_title %}Dashboard{% endblock %}</h1>
+                                    <p class="text-sm text-gray-500">{% block page_description %}Painel de controle do sistema{% endblock %}</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center space-x-4">
+                                {% block header_actions %}{% endblock %}
+                                <div class="text-sm text-gray-500">
+                                    <i class="fas fa-clock mr-1"></i>
+                                    <span id="currentTime"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Page content -->
+                <main class="flex-1 overflow-y-auto">
+                    <div class="py-6">
+                        <div class="mx-auto px-4 sm:px-6 lg:px-8">
+                            <!-- Flash messages -->
+                            {% with messages = get_flashed_messages(with_categories=true) %}
+                                {% if messages %}
+                                    <div class="mb-4 space-y-2">
+                                        {% for category, message in messages %}
+                                            <div class="flash-message alert alert-{{ 'danger' if category == 'error' else category }} bg-{{ 'red' if category == 'error' else ('green' if category == 'success' else ('yellow' if category == 'warning' else 'blue')) }}-50 border border-{{ 'red' if category == 'error' else ('green' if category == 'success' else ('yellow' if category == 'warning' else 'blue')) }}-200 text-{{ 'red' if category == 'error' else ('green' if category == 'success' else ('yellow' if category == 'warning' else 'blue')) }}-800 px-4 py-3 rounded relative">
+                                                <span class="block sm:inline">{{ message }}</span>
+                                                <button class="absolute top-0 bottom-0 right-0 px-4 py-3" onclick="this.parentElement.style.display='none'">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            {% endwith %}
+                            
+                            {% block content %}{% endblock %}
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+        {% else %}
+        <!-- Not authenticated content -->
+        <main class="min-h-full">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="fixed top-4 right-4 z-50 space-y-2">
+                        {% for category, message in messages %}
+                            <div class="flash-message alert alert-{{ 'danger' if category == 'error' else category }} bg-{{ 'red' if category == 'error' else ('green' if category == 'success' else ('yellow' if category == 'warning' else 'blue')) }}-50 border border-{{ 'red' if category == 'error' else ('green' if category == 'success' else ('yellow' if category == 'warning' else 'blue')) }}-200 text-{{ 'red' if category == 'error' else ('green' if category == 'success' else ('yellow' if category == 'warning' else 'blue')) }}-800 px-4 py-3 rounded relative max-w-sm">
+                                <span class="block">{{ message }}</span>
+                                <button class="absolute top-0 bottom-0 right-0 px-2 py-3" onclick="this.parentElement.style.display='none'">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+            
+            {% block content %}{% endblock %}
+        </main>
+        {% endif %}
+    </div>
+    
+    <!-- Loading overlay -->
+    <div id="loadingOverlay" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 z-50 flex items-center justify-center">
+        <div class="bg-white p-6 rounded-lg shadow-lg flex items-center">
+            <i class="fas fa-spinner fa-spin text-primary text-2xl mr-3"></i>
+            <span>Carregando...</span>
+        </div>
+    </div>
+    
+    <!-- Scripts -->
+    <script>
+        // Toggle sidebar
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('-translate-x-full');
+        }
+        
+        // Toggle user menu
+        function toggleUserMenu() {
+            const menu = document.getElementById('userMenu');
+            menu.classList.toggle('hidden');
+        }
+        
+        // Close user menu when clicking outside
+        document.addEventListener('click', function(event) {
+            const menu = document.getElementById('userMenu');
+            const button = event.target.closest('button');
+            if (!button || !button.onclick || button.onclick.toString().indexOf('toggleUserMenu') === -1) {
+                if (!menu.classList.contains('hidden')) {
+                    menu.classList.add('hidden');
+                }
+            }
+        });
+        
+        // Update current time
+        function updateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const timeElement = document.getElementById('currentTime');
+            if (timeElement) {
+                timeElement.textContent = timeString;
+            }
+        }
+        
+        // Auto-hide flash messages
+        document.addEventListener('DOMContentLoaded', function() {
+            updateTime();
+            setInterval(updateTime, 60000); // Update every minute
+            
+            setTimeout(function() {
+                const messages = document.querySelectorAll('.flash-message');
+                messages.forEach(function(message) {
+                    message.style.display = 'none';
+                });
+            }, 5000);
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
