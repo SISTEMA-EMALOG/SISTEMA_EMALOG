@@ -15,13 +15,10 @@ _log_level = logging.DEBUG if os.environ.get('FLASK_DEBUG') == '1' else logging.
 logging.basicConfig(level=_log_level)
 
 # ── Credenciais do administrador inicial ────────────────────────────────────
-# Definidas diretamente no código a pedido do time (ambiente sem banco
-# gerenciado por enquanto). setdefault() significa que, se essas variáveis
-# forem configuradas depois nas Variáveis de Ambiente do Elastic Beanstalk,
-# esses valores abaixo são ignorados e os da configuração do ambiente prevalecem.
-os.environ.setdefault("INITIAL_ADMIN_EMAIL", "admin@sistemaemalog.com.br")
-os.environ.setdefault("INITIAL_login_manager", "admin")
-os.environ.setdefault("INITIAL_ADMIN_PASSWORD", "1i8blk2uRyAA663Q")
+# Não hardcoded no código — definidas via Variáveis de Ambiente do Elastic
+# Beanstalk (.ebextensions/session-secret.config). Se INITIAL_ADMIN_PASSWORD
+# não estiver setada no ambiente, o bootstrap de admin simplesmente não roda
+# (ver mensagem de log "Admin inicial não criado").
 
 class Base(DeclarativeBase):
     pass
@@ -50,7 +47,12 @@ def create_app():
     # ── Session cookie hardening ──────────────────────────────────────────────
     app.config['SESSION_COOKIE_HTTPONLY'] = True
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-    app.config['SESSION_COOKIE_SECURE'] = True   # served over HTTPS via proxy
+    # Controlado por env var — o ambiente atual do EB não tem HTTPS configurado
+    # (sem certificado ACM no load balancer). Deixar True aqui sem HTTPS real
+    # faz o navegador nunca devolver o cookie de sessão, quebrando login/CSRF
+    # de forma silenciosa e 100% reprodutível. Setar SESSION_COOKIE_SECURE=true
+    # no ambiente assim que o HTTPS estiver ativo.
+    app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
     app.config['PERMANENT_SESSION_LIFETIME'] = 43200  # 12 h
     app.config['IDLE_TIMEOUT_MINUTES'] = int(os.environ.get('IDLE_TIMEOUT_MINUTES', 30))
 
@@ -286,6 +288,12 @@ def create_app():
                 else:
                     logging.error(f"❌ Falha ao conectar ao banco após 5 tentativas: {e}")
                     raise
+
+    # User loader for Flask-Login
+    @login_manager.user_loader
+    def load_user(user_id):
+        from models import User
+        return User.query.get(int(user_id))
 
     # Importar e registrar blueprints
     blueprints_registered = []

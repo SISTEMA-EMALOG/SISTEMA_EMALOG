@@ -53,18 +53,32 @@ def index():
     recent_freights = Freight.query.options(joinedload(Freight.client)).order_by(Freight.created_at.desc()).limit(5).all()
 
     # ── Receita mensal — UMA query GROUP BY ao invés de 6 loops ──────────────
+    # date_trunc é função só de PostgreSQL — o ambiente atual roda em SQLite
+    # (fallback, sem DATABASE_URL configurada). strftime é o equivalente no
+    # SQLite. Mantido dialect-aware para não quebrar de novo quando migrarem
+    # para um banco gerenciado.
     six_months_ago = (datetime.now().replace(day=1) - timedelta(days=150)).replace(day=1)
+    if db.engine.dialect.name == 'sqlite':
+        month_expr = func.strftime('%Y-%m', Freight.created_at)
+    else:
+        month_expr = func.date_trunc('month', Freight.created_at)
+
     monthly_rows = db.session.query(
-        func.date_trunc('month', Freight.created_at).label('month'),
+        month_expr.label('month'),
         func.sum(Freight.agreed_price).label('revenue')
     ).filter(
         Freight.status == 'entregue',
         Freight.created_at >= six_months_ago
-    ).group_by(func.date_trunc('month', Freight.created_at)
-    ).order_by(func.date_trunc('month', Freight.created_at)).all()
+    ).group_by(month_expr
+    ).order_by(month_expr).all()
 
     # Garante os últimos 6 meses mesmo sem dados
-    monthly_map = {row.month.strftime('%Y-%m'): float(row.revenue or 0) for row in monthly_rows}
+    # SQLite (strftime) já devolve string 'YYYY-MM'; PostgreSQL (date_trunc)
+    # devolve datetime — trata os dois formatos.
+    monthly_map = {
+        (row.month if isinstance(row.month, str) else row.month.strftime('%Y-%m')): float(row.revenue or 0)
+        for row in monthly_rows
+    }
     monthly_revenue = []
     for i in range(5, -1, -1):
         d = (datetime.now().replace(day=1) - timedelta(days=30 * i)).replace(day=1)

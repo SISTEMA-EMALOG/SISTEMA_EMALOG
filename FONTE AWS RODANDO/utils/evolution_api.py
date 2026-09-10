@@ -7,9 +7,9 @@ logger = logging.getLogger(__name__)
 
 def _cfg():
     return {
-        'url':      os.environ.get('EVOLUTION_API_URL', 'https://evolution-evolution.iqutxq.easypanel.host/').rstrip('/'),
-        'key':      os.environ.get('EVOLUTION_API_KEY', 'DDBC7EA2010A-440D-B3CB-349F1D24FFE7'),
-        'instance': os.environ.get('EVOLUTION_INSTANCE', 'outra'),
+        'url':      os.environ.get('EVOLUTION_API_URL', '').rstrip('/'),
+        'key':      os.environ.get('EVOLUTION_API_KEY', ''),
+        'instance': os.environ.get('EVOLUTION_INSTANCE', 'emalog'),
     }
 
 
