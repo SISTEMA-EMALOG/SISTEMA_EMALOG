@@ -83,6 +83,22 @@ Nunca envie o arquivo `.env` ao GitHub.
 Crie um banco PostgreSQL vazio e configure `DATABASE_URL`. No primeiro startup,
 o projeto cria as tabelas e executa as migrações de compatibilidade existentes.
 
+Para AWS Aurora PostgreSQL, existem duas opções:
+
+```bash
+# Opção recomendada: o aplicativo cria e atualiza o schema
+python main.py
+
+# Opção administrativa: aplicar o DDL explícito antes do primeiro startup
+psql "$DATABASE_URL" -f database/schema_postgresql.sql
+```
+
+O DDL pode ser regenerado sempre que os modelos forem alterados:
+
+```bash
+python scripts/export_postgres_schema.py
+```
+
 Para desenvolvimento sem PostgreSQL, a ausência de `DATABASE_URL` ativa SQLite
 em `instance/emalog.db`. PostgreSQL continua sendo o ambiente recomendado.
 
@@ -121,6 +137,32 @@ aplicação, mas suas funções dependem das respectivas configurações:
 | `MAIL_*` | Envio de e-mails |
 | `DEFAULT_OBJECT_STORAGE_BUCKET_ID` | Armazenamento persistente no Replit |
 | `SOCKETIO_ALLOWED_ORIGINS` | Origens autorizadas no Socket.IO |
+| `INITIAL_ADMIN_EMAIL` | E-mail usado somente no bootstrap inicial |
+| `INITIAL_ADMIN_USERNAME` | Usuário do administrador inicial |
+| `INITIAL_ADMIN_PASSWORD` | Senha inicial, com no mínimo 12 caracteres |
+
+Após o primeiro login, altere a senha e remova `INITIAL_ADMIN_PASSWORD` do
+ambiente. Não existe credencial administrativa fixa no código-fonte.
+
+## Dados mínimos de homologação
+
+O sistema não carrega dados de demonstração automaticamente. Para criar apenas
+um administrador e uma empresa totalmente fictícia em um banco de homologação:
+
+```bash
+export FLASK_ENV=development
+export DATABASE_URL="postgresql://..."
+export INITIAL_ADMIN_EMAIL="admin@example.com"
+export INITIAL_ADMIN_USERNAME="admin"
+export INITIAL_ADMIN_PASSWORD="uma-senha-temporaria-forte"
+export ALLOW_MINIMAL_TEST_SEED=true
+python scripts/seed_minimal_test_data.py
+```
+
+Esse comando é idempotente e não deve ser usado no banco de produção.
+
+O arquivo operacional `utils/seed_data.json` não faz parte da distribuição.
+`utils/seed_data.example.json` documenta apenas o formato vazio e seguro.
 
 ## Evolution API
 

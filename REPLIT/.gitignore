@@ -23,6 +23,7 @@ attached_assets/
 screenshots/
 artifacts/
 static/uploads/
+utils/seed_data.json
 node_modules/
 *.zip
 *.tar.gz

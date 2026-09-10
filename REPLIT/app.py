@@ -252,19 +252,19 @@ def create_app():
                 def _bg_post_init():
                     """Roda em background: admin + seed."""
                     with app.app_context():
-                        # 1. Admin padrão
+                        # 1. Admin inicial (somente quando configurado por ambiente)
                         try:
                             create_default_admin()
-                            logging.info("✅ Admin padrão configurado")
                         except Exception as adm_err:
                             logging.error(f"⚠️ Erro ao configurar admin: {adm_err}")
 
-                        # 3. Seed de dados
-                        try:
-                            from utils.seed import run_seed_if_empty
-                            run_seed_if_empty(app, db)
-                        except Exception as seed_err:
-                            logging.warning(f"⚠️ Seed ignorado: {seed_err}")
+                        # 2. Dados de demonstração são opt-in e nunca automáticos.
+                        if os.environ.get("ENABLE_DEMO_SEED", "").lower() in ("1", "true", "yes"):
+                            try:
+                                from utils.seed import run_seed_if_empty
+                                run_seed_if_empty(app, db)
+                            except Exception as seed_err:
+                                logging.warning(f"⚠️ Seed ignorado: {seed_err}")
 
                 _t = _threading.Thread(target=_bg_post_init, daemon=True, name='db-post-init')
                 _t.start()
@@ -663,18 +663,37 @@ def create_app():
     return app
 
 def create_default_admin():
-    """Create default admin user if not exists"""
+    """Create an initial admin only from explicitly configured environment values."""
     from models import User
     from werkzeug.security import generate_password_hash
 
-    admin = User.query.filter_by(email='patrick.souza@emalog.com.br').first()
+    email = os.environ.get("INITIAL_ADMIN_EMAIL", "").strip().lower()
+    password = os.environ.get("INITIAL_ADMIN_PASSWORD", "")
+    username = os.environ.get("INITIAL_ADMIN_USERNAME", "").strip()
+
+    if not email or not password:
+        logging.info(
+            "ℹ️ Admin inicial não criado: configure INITIAL_ADMIN_EMAIL e "
+            "INITIAL_ADMIN_PASSWORD para habilitar o bootstrap."
+        )
+        return None
+    if len(password) < 12:
+        raise ValueError("INITIAL_ADMIN_PASSWORD deve ter pelo menos 12 caracteres")
+    if not username:
+        username = email.split("@", 1)[0][:64]
+
+    admin = User.query.filter_by(email=email).first()
     if not admin:
-        admin = User()
-        admin.username = 'patrick.souza'
-        admin.email = 'patrick.souza@emalog.com.br'
-        admin.password_hash = generate_password_hash('$Geraldo87')
-        admin.role = 'admin'
-        admin.active = True
+        admin = User(
+            username=username,
+            email=email,
+            password_hash=generate_password_hash(password),
+            role="admin",
+            active=True,
+            first_login=True,
+            must_change_password=True,
+        )
         db.session.add(admin)
         db.session.commit()
-        logging.info("Default admin user created successfully")
+        logging.info("✅ Administrador inicial criado a partir do ambiente")
+    return admin

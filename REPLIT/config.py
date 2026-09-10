@@ -1,7 +1,9 @@
 import os
 
 class Config:
-    SECRET_KEY = os.environ.get('SESSION_SECRET') or 'dev-secret-key'
+    SECRET_KEY = os.environ.get('SESSION_SECRET') or (
+        'dev-secret-key' if os.environ.get('FLASK_ENV', 'development') != 'production' else None
+    )
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///instance/emalog.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     UPLOAD_FOLDER = 'uploads'
