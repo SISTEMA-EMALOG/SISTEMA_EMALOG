@@ -20,7 +20,7 @@ logging.basicConfig(level=_log_level)
 # forem configuradas depois nas Variáveis de Ambiente do Elastic Beanstalk,
 # esses valores abaixo são ignorados e os da configuração do ambiente prevalecem.
 os.environ.setdefault("INITIAL_ADMIN_EMAIL", "admin@sistemaemalog.com.br")
-os.environ.setdefault("INITIAL_ADMIN_USERNAME", "admin")
+os.environ.setdefault("INITIAL_login_manager", "admin")
 os.environ.setdefault("INITIAL_ADMIN_PASSWORD", "1i8blk2uRyAA663Q")
 
 class Base(DeclarativeBase):
@@ -286,12 +286,6 @@ def create_app():
                 else:
                     logging.error(f"❌ Falha ao conectar ao banco após 5 tentativas: {e}")
                     raise
-
-    # User loader for Flask-Login
-    @login_manager.user_loader
-    def load_user(user_id):
-        from models import User
-        return User.query.get(int(user_id))
 
     # Importar e registrar blueprints
     blueprints_registered = []
