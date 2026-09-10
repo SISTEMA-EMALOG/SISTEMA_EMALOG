@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+
+{% block title %}Cotação {{ quote.quote_number }} - EMALOG{% endblock %}
+{% block page_title %}Cotação {{ quote.quote_number }}{% endblock %}
+
+{% block header_actions %}
+<div class="flex space-x-3">
+    <a href="{{ url_for('quotes.download_pdf', id=quote.id) }}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
+        <i class="fas fa-file-pdf mr-2"></i>Download PDF
+    </a>
+    
+    {% if current_user.role in ['admin', 'operador'] %}
+        {% if quote.status == 'pendente' %}
+        <button onclick="approveQuote({{ quote.id }})" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
+            <i class="fas fa-check mr-2"></i>Aprovar
+        </button>
+        
+        <button onclick="rejectQuote({{ quote.id }})" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
+            <i class="fas fa-times mr-2"></i>Rejeitar
+        </button>
+        
+        <a href="{{ url_for('quotes.edit', id=quote.id) }}" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition">
+            <i class="fas fa-edit mr-2"></i>Editar
+        </a>
+        {% endif %}
+        
+        {% if quote.status == 'aprovado' %}
+        <a href="{{ url_for('freight.new', quote_id=quote.id) }}" class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition">
+            <i class="fas fa-shipping-fast mr-2"></i>Criar Frete
+        </a>
+        {% endif %}
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <!-- Main Content -->
+    <div class="lg:col-span-2 space-y-6">
+        <!-- Quote Information -->
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900">Informações da Cotação</h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Número da Cotação</label>
+                        <p class="mt-1 text-sm text-gray-900 font-mono">{{ quote.quote_number }}</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Status</label>
+                        <span class="mt-1 inline-flex px-3 py-1 text-sm font-semibold rounded-full
+                               {% if quote.status == 'aprovado' %}bg-green-100 text-green-800
+                               {% elif quote.status == 'rejeitado' %}bg-red-100 text-red-800
+                               {% elif quote.status == 'expirado' %}bg-gray-100 text-gray-800
+                               {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                            {{ quote.status|title }}
+                        </span>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Data de Criação</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.created_at.strftime('%d/%m/%Y às %H:%M') }}</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Válida até</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.valid_until.strftime('%d/%m/%Y') }}</p>
+                        {% set days_left = (quote.valid_until - moment().date()).days %}
+                        {% if days_left < 0 %}
+                        <p class="text-xs text-red-500">Expirada há {{ (-days_left) }} dias</p>
+                        {% elif days_left <= 3 %}
+                        <p class="text-xs text-orange-500">Expira em {{ days_left }} dias</p>
+                        {% else %}
+                        <p class="text-xs text-green-500">{{ days_left }} dias restantes</p>
+                        {% endif %}
+                    </div>
+                    
+                    {% if quote.approved_at %}
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700">Aprovada em</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.approved_at.strftime('%d/%m/%Y às %H:%M') }}</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Client Information -->
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900">Dados do Cliente</h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Empresa</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.client.company_name }}</p>
+                        {% if quote.client.trade_name %}
+                        <p class="text-xs text-gray-500">{{ quote.client.trade_name }}</p>
+                        {% endif %}
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">CNPJ</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.client.cnpj }}</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Telefone</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.client.phone }}</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">E-mail</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.client.email }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Route and Product -->
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900">Rota e Produto</h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Origem</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.origin }}</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Destino</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.destination }}</p>
+                    </div>
+                    
+                    {% if quote.distance_km %}
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Distância</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.distance_km|int }} km</p>
+                    </div>
+                    {% endif %}
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Produto</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.product }}</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Peso</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.weight|int }} kg</p>
+                    </div>
+                    
+                    {% if quote.volume %}
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Volume</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ quote.volume }} m³</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Notes -->
+        {% if quote.notes %}
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900">Observações</h3>
+            </div>
+            <div class="px-6 py-4">
+                <p class="text-sm text-gray-900 whitespace-pre-wrap">{{ quote.notes }}</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Sidebar -->
+    <div class="space-y-6">
+        <!-- Pricing -->
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 bg-primary text-white">
+                <h3 class="text-lg font-medium">Valores</h3>
+            </div>
+            <div class="px-6 py-4 space-y-4">
+                <div class="flex justify-between items-center">
+                    <span class="text-sm text-gray-600">Preço Base:</span>
+                    <span class="text-sm font-medium text-gray-900">R$ {{ "%.2f"|format(quote.base_price) }}</span>
+                </div>
+                
+                <div class="flex justify-between items-center">
+                    <span class="text-sm text-gray-600">Margem de Lucro:</span>
+                    <span class="text-sm font-medium text-gray-900">{{ quote.profit_margin }}%</span>
+                </div>
+                
+                <hr class="border-gray-200">
+                
+                <div class="flex justify-between items-center">
+                    <span class="text-lg font-medium text-gray-900">Preço Final:</span>
+                    <span class="text-2xl font-bold text-primary">R$ {{ "%.2f"|format(quote.final_price) }}</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Related Freights -->
+        {% if quote.freights %}
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900">Fretes Relacionados</h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="space-y-3">
+                    {% for freight in quote.freights %}
+                    <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        <div>
+                            <p class="text-sm font-medium text-gray-900">{{ freight.freight_number }}</p>
+                            <p class="text-xs text-gray-500">{{ freight.created_at.strftime('%d/%m/%Y') }}</p>
+                        </div>
+                        <div class="text-right">
+                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full
+                                   {% if freight.status == 'entregue' %}bg-green-100 text-green-800
+                                   {% elif freight.status == 'em_transito' %}bg-blue-100 text-blue-800
+                                   {% elif freight.status == 'aceito' %}bg-yellow-100 text-yellow-800
+                                   {% else %}bg-gray-100 text-gray-800{% endif %}">
+                                {{ freight.status|replace('_', ' ')|title }}
+                            </span>
+                            <a href="{{ url_for('freight.view', id=freight.id) }}" class="block text-xs text-primary hover:text-primary-dark mt-1">
+                                Ver detalhes
+                            </a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Actions -->
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900">Ações</h3>
+            </div>
+            <div class="px-6 py-4 space-y-3">
+                <a href="{{ url_for('quotes.download_pdf', id=quote.id) }}" 
+                   class="w-full inline-flex justify-center items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
+                    <i class="fas fa-file-pdf mr-2"></i>Download PDF
+                </a>
+                
+                {% if current_user.role in ['admin', 'operador'] and quote.status == 'aprovado' %}
+                <a href="{{ url_for('freight.new', quote_id=quote.id) }}" 
+                   class="w-full inline-flex justify-center items-center px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition">
+                    <i class="fas fa-shipping-fast mr-2"></i>Criar Frete
+                </a>
+                {% endif %}
+                
+                <a href="{{ url_for('quotes.index') }}" 
+                   class="w-full inline-flex justify-center items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+                    <i class="fas fa-arrow-left mr-2"></i>Voltar à Lista
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function approveQuote(quoteId) {
+    if (confirm('Deseja aprovar esta cotação?')) {
+        showLoading();
+        fetch(`/quotes/${quoteId}/approve`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            hideLoading();
+            if (data.success) {
+                showNotification(data.message, 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showNotification(data.message, 'error');
+            }
+        })
+        .catch(error => {
+            hideLoading();
+            showNotification('Erro ao aprovar cotação', 'error');
+        });
+    }
+}
+
+function rejectQuote(quoteId) {
+    if (confirm('Deseja rejeitar esta cotação?')) {
+        showLoading();
+        fetch(`/quotes/${quoteId}/reject`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            hideLoading();
+            if (data.success) {
+                showNotification(data.message, 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showNotification(data.message, 'error');
+            }
+        })
+        .catch(error => {
+            hideLoading();
+            showNotification('Erro ao rejeitar cotação', 'error');
+        });
+    }
+}
+</script>
+{% endblock %}

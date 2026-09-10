@@ -1,0 +1,250 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}Dashboard - EMALOG{% endblock %}
+{% block page_title %}Dashboard Principal{% endblock %}
+{% block page_description %}Visão geral do sistema de gestão logística{% endblock %}
+
+{% block header_actions %}
+<button onclick="refreshDashboard()" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition">
+    <i class="fas fa-sync-alt mr-2"></i>Atualizar
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Alerta: Propostas aguardando resposta do cliente -->
+    {% if awaiting_client_quotes > 0 %}
+    <div class="bg-blue-50 border-l-4 border-blue-400 p-4">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <i class="fas fa-clock text-blue-500 text-xl"></i>
+            </div>
+            <div class="ml-3 flex-1">
+                <h3 class="text-base font-semibold text-blue-800">
+                    {{ awaiting_client_quotes }} Proposta{{ 's' if awaiting_client_quotes != 1 else '' }} Aguardando Resposta do Cliente
+                </h3>
+                <p class="text-sm text-blue-700 mt-0.5">O valor foi enviado. O cliente ainda não aprovou, fez contraproposta ou recusou.</p>
+                <a href="{{ url_for('quotes.index') }}?status=cotada"
+                   class="mt-2 inline-flex items-center text-sm font-medium text-blue-800 hover:text-blue-900">
+                    Ver propostas aguardando →
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Alerta Urgente de Cotações Pendentes -->
+    {% if pending_quotes > 0 %}
+    <div class="bg-red-50 border-l-4 border-red-400 p-4 motion-safe:animate-pulse">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <i class="fas fa-exclamation-triangle text-red-400 text-xl"></i>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-lg font-medium text-red-800">
+                    🚨 {{ pending_quotes }} Cotação{{ 'ões' if pending_quotes != 1 else '' }} Pendente{{ 's' if pending_quotes != 1 else '' }}
+                </h3>
+                <div class="mt-2 text-sm text-red-700">
+                    <p class="font-medium">AÇÃO OBRIGATÓRIA: Existem cotações aguardando avaliação!</p>
+                    {% for quote in urgent_quotes %}
+                    <div class="mt-2 p-2 bg-red-100 rounded border">
+                        <a href="{{ url_for('quotes.view', id=quote.id) }}" class="text-red-800 hover:text-red-900 font-medium">
+                            📋 {{ quote.quote_number }} - {{ quote.client.company_name }}
+                            <span class="text-xs">({{ quote.created_at.strftime('%d/%m %H:%M') }})</span>
+                        </a>
+                    </div>
+                    {% endfor %}
+                    {% if pending_quotes > 3 %}
+                    <div class="mt-2">
+                        <a href="{{ url_for('quotes.index') }}?status=pendente" class="text-red-800 hover:text-red-900 text-sm font-medium">
+                            Ver todas as {{ pending_quotes }} cotações pendentes →
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Alertas Operacionais -->
+    {% if alerts %}
+    <div class="space-y-2">
+        {% for alert in alerts %}
+        {% if alert.type == 'danger' %}
+        <a href="{{ alert.link }}" class="flex items-center p-3 rounded-lg border text-sm font-medium bg-red-50 border-red-200 text-red-800 hover:bg-red-100">
+            <i class="fas {{ alert.icon }} mr-3 text-base flex-shrink-0"></i>
+            <span>{{ alert.msg }}</span>
+            <i class="fas fa-chevron-right ml-auto text-xs"></i>
+        </a>
+        {% else %}
+        <a href="{{ alert.link }}" class="flex items-center p-3 rounded-lg border text-sm font-medium bg-yellow-50 border-yellow-200 text-yellow-800 hover:bg-yellow-100">
+            <i class="fas {{ alert.icon }} mr-3 text-base flex-shrink-0"></i>
+            <span>{{ alert.msg }}</span>
+            <i class="fas fa-chevron-right ml-auto text-xs"></i>
+        </a>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div class="bg-white rounded-lg shadow p-6 {% if pending_quotes > 0 %}border-l-4 border-red-500{% endif %}">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i class="fas fa-file-invoice {% if pending_quotes > 0 %}text-red-500 animate-pulse{% else %}text-blue-500{% endif %} text-2xl"></i>
+                </div>
+                <div class="ml-4">
+                    <p class="text-sm font-medium text-gray-500 truncate">Total de Cotações</p>
+                    <p class="text-2xl font-semibold text-gray-900">{{ stats.total_quotes }}</p>
+                    {% if pending_quotes > 0 %}
+                    <p class="text-xs text-red-600 font-medium">{{ pending_quotes }} PENDENTE{{ 'S' if pending_quotes != 1 else '' }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <div class="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center">
+                        <i class="fas fa-truck text-white text-sm"></i>
+                    </div>
+                </div>
+                <div class="ml-4">
+                    <p class="text-sm font-medium text-gray-500">Motoristas</p>
+                    <p class="text-2xl font-semibold text-gray-900" id="drivers-count">{{ stats.total_drivers }}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <div class="w-8 h-8 bg-green-500 rounded-md flex items-center justify-center">
+                        <i class="fas fa-building text-white text-sm"></i>
+                    </div>
+                </div>
+                <div class="ml-4">
+                    <p class="text-sm font-medium text-gray-500">Clientes</p>
+                    <p class="text-2xl font-semibold text-gray-900" id="clients-count">{{ stats.total_clients }}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <div class="w-8 h-8 bg-primary rounded-md flex items-center justify-center">
+                        <i class="fas fa-shipping-fast text-white text-sm"></i>
+                    </div>
+                </div>
+                <div class="ml-4">
+                    <p class="text-sm font-medium text-gray-500">Fretes Ativos</p>
+                    <p class="text-2xl font-semibold text-gray-900" id="freights-count">{{ stats.active_freights }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Funil de Cotações + Receita Mensal -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-base font-semibold text-gray-900 mb-4">
+                <i class="fas fa-filter text-blue-500 mr-2"></i>Funil de Cotações
+            </h3>
+            <canvas id="chartFunnel" height="220"></canvas>
+        </div>
+        <div class="lg:col-span-2 bg-white rounded-lg shadow p-6">
+            <h3 class="text-base font-semibold text-gray-900 mb-4">
+                <i class="fas fa-chart-line text-green-500 mr-2"></i>Receita dos Últimos 6 Meses
+            </h3>
+            <canvas id="chartRevenue" height="130"></canvas>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h3 class="text-lg font-medium text-gray-900 mb-4">Ações Rápidas</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {% if current_user.role in ['admin', 'operador'] %}
+            <a href="{{ url_for('drivers.index') }}" class="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+                <i class="fas fa-truck text-blue-500 mr-3"></i>
+                <span class="font-medium">Gerenciar Motoristas</span>
+            </a>
+            <a href="{{ url_for('clients.index') }}" class="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+                <i class="fas fa-building text-green-500 mr-3"></i>
+                <span class="font-medium">Gerenciar Clientes</span>
+            </a>
+            {% endif %}
+            <a href="{{ url_for('quotes.index') }}" class="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+                <i class="fas fa-file-invoice text-yellow-500 mr-3"></i>
+                <span class="font-medium">Nova Cotação</span>
+            </a>
+            <a href="{{ url_for('freight.index') }}" class="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+                <i class="fas fa-shipping-fast text-primary mr-3"></i>
+                <span class="font-medium">Controlar Fretes</span>
+            </a>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+function refreshDashboard() { location.reload(); }
+
+const funnelRaw  = {{ quote_funnel | safe }};
+const revenueRaw = {{ monthly_revenue | tojson }};
+
+// ── Funil de Cotações (barras horizontais) ────────────────────────────────
+new Chart(document.getElementById('chartFunnel'), {
+    type: 'bar',
+    data: {
+        labels: funnelRaw.labels,
+        datasets: [{
+            label: 'Cotações',
+            data: funnelRaw.data,
+            backgroundColor: ['#3b82f6','#f59e0b','#8b5cf6','#10b981','#ef4444'],
+            borderRadius: 4
+        }]
+    },
+    options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
+    }
+});
+
+// ── Receita Mensal ────────────────────────────────────────────────────────
+if (revenueRaw && revenueRaw.length) {
+    new Chart(document.getElementById('chartRevenue'), {
+        type: 'line',
+        data: {
+            labels: revenueRaw.map(r => r.month),
+            datasets: [{
+                label: 'Receita (R$)',
+                data: revenueRaw.map(r => r.revenue),
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16,185,129,0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, ticks: { callback: v => 'R$ ' + v.toLocaleString('pt-BR') } }
+            }
+        }
+    });
+}
+</script>
+{% endblock %}

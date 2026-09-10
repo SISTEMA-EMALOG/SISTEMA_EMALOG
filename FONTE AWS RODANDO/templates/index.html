@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}EMALOG - Sistema de Gestão Logística{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-4xl w-full space-y-8">
+        <!-- Logo and Title -->
+        <div class="text-center">
+            <div class="mx-auto mb-6 flex items-center justify-center">
+                <img src="{{ url_for('static', filename='logo-emalog.png') }}" alt="EMALOG Logo" class="h-24 w-auto object-contain">
+            </div>
+            <p class="text-xl text-gray-600 mb-8">Sistema Completo de Gestão Logística</p>
+        </div>
+
+        <!-- Features Grid -->
+        <div class="grid md:grid-cols-3 gap-8 mb-12">
+            <div class="bg-white rounded-xl shadow-lg p-6 text-center hover:shadow-xl transition-shadow">
+                <div class="w-16 h-16 bg-blue-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-truck text-blue-600 text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Gestão de Motoristas</h3>
+                <p class="text-gray-600">Controle completo de motoristas, veículos e documentação</p>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-lg p-6 text-center hover:shadow-xl transition-shadow">
+                <div class="w-16 h-16 bg-green-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-building text-green-600 text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Clientes</h3>
+                <p class="text-gray-600">Cadastro e gestão de relacionamento com clientes</p>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-lg p-6 text-center hover:shadow-xl transition-shadow">
+                <div class="w-16 h-16 bg-yellow-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-file-invoice text-yellow-600 text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Cotações</h3>
+                <p class="text-gray-600">Sistema automatizado de cotações e orçamentos</p>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-lg p-6 text-center hover:shadow-xl transition-shadow">
+                <div class="w-16 h-16 bg-indigo-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-shipping-fast text-indigo-600 text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Fretes</h3>
+                <p class="text-gray-600">Controle total do ciclo de vida dos fretes</p>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-lg p-6 text-center hover:shadow-xl transition-shadow">
+                <div class="w-16 h-16 bg-purple-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-dollar-sign text-purple-600 text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Financeiro</h3>
+                <p class="text-gray-600">Gestão financeira completa e relatórios</p>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-lg p-6 text-center hover:shadow-xl transition-shadow">
+                <div class="w-16 h-16 bg-red-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-comments text-red-600 text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Chat em Tempo Real</h3>
+                <p class="text-gray-600">Comunicação instantânea entre usuários</p>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="text-center space-y-4">
+            <div class="space-x-4">
+                <a href="{{ url_for('auth.login') }}" class="inline-flex items-center px-8 py-3 border border-transparent text-base font-medium rounded-lg shadow-sm text-white bg-primary hover:bg-primary-dark transition">
+                    <i class="fas fa-sign-in-alt mr-2"></i>
+                    Fazer Login
+                </a>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center text-gray-500 text-sm mt-12">
+            <div class="flex items-center justify-center mb-2">
+                <img src="{{ url_for('static', filename='logo-emalog.png') }}" alt="EMALOG Logo" class="h-8 w-auto mr-2">
+                <span class="font-medium">EMALOG</span>
+            </div>
+            <p>&copy; 2025 EMALOG - Sistema de Gestão Logística</p>
+            <p class="mt-1">CNPJ: 34.571.369/0001-76</p>
+            <p class="text-xs mt-1">Desenvolvido com Flask e PostgreSQL</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

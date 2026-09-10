@@ -1,0 +1,464 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}{{ driver.name }} - Motorista - EMALOG{% endblock %}
+{% block page_title %}Detalhes do Motorista{% endblock %}
+{% block page_description %}Informações completas de {{ driver.name }}{% endblock %}
+
+{% block header_actions %}
+<div class="flex space-x-3">
+    <a href="{{ url_for('drivers.index') }}" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition">
+        <i class="fas fa-arrow-left mr-2"></i>Voltar à Lista
+    </a>
+    {% if current_user.role in ['admin', 'operador'] %}
+    <a href="{{ url_for('drivers.edit', id=driver.id) }}" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition">
+        <i class="fas fa-edit mr-2"></i>Editar Dados
+    </a>
+    <button onclick="confirmDelete({{ driver.id }}, '{{ driver.name | e }}')"
+            class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">
+        <i class="fas fa-trash mr-2"></i>Excluir
+    </button>
+    {% endif %}
+</div>
+
+<!-- Modal de confirmação de exclusão -->
+<div id="modal-delete-confirm" class="fixed inset-0 z-[10000] hidden bg-black/60 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+    <div class="flex items-center gap-4 mb-4">
+      <div class="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+        <i class="fas fa-exclamation-triangle text-red-600 text-xl"></i>
+      </div>
+      <div>
+        <h3 class="text-lg font-bold text-gray-900">Excluir Motorista</h3>
+        <p class="text-sm text-gray-500">Esta ação não pode ser desfeita.</p>
+      </div>
+    </div>
+    <p class="text-sm text-gray-700 mb-6">
+      Tem certeza que deseja excluir o motorista <strong id="delete-driver-name"></strong>?
+      Sessões EMA e dados vinculados serão removidos permanentemente.
+    </p>
+    <div class="flex justify-end gap-3">
+      <button onclick="document.getElementById('modal-delete-confirm').classList.add('hidden')"
+              class="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
+        Cancelar
+      </button>
+      <form id="delete-form" method="POST">
+        <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token', '') }}">
+        <button type="submit" class="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold">
+          <i class="fas fa-trash mr-1"></i> Sim, excluir
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Informações Principais -->
+    <div class="lg:col-span-2 space-y-6">
+        <!-- Dados Pessoais -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900 flex items-center">
+                    <i class="fas fa-user text-primary mr-2"></i>
+                    Dados Pessoais
+                </h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Nome Completo</label>
+                        <p class="text-sm text-gray-900 font-medium">{{ driver.name }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">CPF</label>
+                        <p class="text-sm text-gray-900">{{ driver.cpf }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">RG</label>
+                        <p class="text-sm text-gray-900">{{ driver.rg }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Data de Nascimento</label>
+                        <p class="text-sm text-gray-900">{{ driver.birth_date.strftime('%d/%m/%Y') if driver.birth_date else '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Telefone</label>
+                        <p class="text-sm text-gray-900">
+                            <a href="tel:{{ driver.phone }}" class="text-primary hover:text-primary-dark">
+                                {{ driver.phone }}
+                            </a>
+                        </p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">E-mail</label>
+                        <p class="text-sm text-gray-900">
+                            {% if driver.email %}
+                                <a href="mailto:{{ driver.email }}" class="text-primary hover:text-primary-dark">
+                                    {{ driver.email }}
+                                </a>
+                            {% else %}
+                                Não informado
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Endereço -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900 flex items-center">
+                    <i class="fas fa-map-marker-alt text-primary mr-2"></i>
+                    Endereço
+                </h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">CEP</label>
+                        <p class="text-sm text-gray-900">{{ driver.cep or '-' }}</p>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-500">Logradouro</label>
+                        <p class="text-sm text-gray-900">{{ driver.street or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Número</label>
+                        <p class="text-sm text-gray-900">{{ driver.number or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Complemento</label>
+                        <p class="text-sm text-gray-900">{{ driver.complement or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Bairro</label>
+                        <p class="text-sm text-gray-900">{{ driver.neighborhood or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Cidade</label>
+                        <p class="text-sm text-gray-900">{{ driver.city or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Estado</label>
+                        <p class="text-sm text-gray-900">{{ driver.state or '-' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Veículo -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900 flex items-center">
+                    <i class="fas fa-truck text-primary mr-2"></i>
+                    Informações do Veículo
+                </h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Tipo de Caminhão</label>
+                        <p class="text-sm text-gray-900">
+                            <span class="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                                {{ driver.truck_type.upper() if driver.truck_type else 'N/A' }}
+                            </span>
+                        </p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Placa</label>
+                        <p class="text-sm text-gray-900 font-mono">{{ driver.vehicle_plate or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Modelo</label>
+                        <p class="text-sm text-gray-900">{{ driver.vehicle_model or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Ano do Veículo</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ driver.vehicle_year }}</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Possui Rastreador</label>
+                        <p class="mt-1 text-sm text-gray-900">
+                            {% if driver.has_tracker %}
+                                <span class="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">Sim</span>
+                            {% else %}
+                                <span class="px-2 py-1 text-xs bg-red-100 text-red-800 rounded-full">Não</span>
+                            {% endif %}
+                        </p>
+                    </div>
+
+                    {% if driver.has_tracker and driver.tracker_type %}
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Tipo de Rastreador</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ driver.tracker_type }}</p>
+                    </div>
+                    {% endif %}
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Número ANTT</label>
+                        <p class="mt-1 text-sm text-gray-900">{{ driver.antt_number or 'N/A' }}</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Vencimento da CNH</label>
+                        <p class="mt-1 text-sm text-gray-900">
+                            {{ driver.cnh_expiry.strftime('%d/%m/%Y') if driver.cnh_expiry else 'N/A' }}
+                            {% if driver.cnh_expiry and driver.cnh_expiry <= today %}
+                                <span class="ml-2 px-2 py-1 text-xs bg-red-100 text-red-800 rounded-full">Vencida</span>
+                            {% elif driver.cnh_expiry and (driver.cnh_expiry - today).days <= 30 %}
+                                <span class="ml-2 px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-full">Vence em breve</span>
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if driver.truck_type == 'carreta' %}
+        <!-- Cavalinho -->
+        <div class="bg-white rounded-lg shadow border border-orange-100">
+            <div class="px-6 py-4 border-b border-orange-100 bg-orange-50 rounded-t-lg">
+                <h3 class="text-lg font-medium text-orange-800 flex items-center">
+                    <i class="fas fa-tractor text-orange-600 mr-2"></i>
+                    Cavalinho (Cavalo Mecânico)
+                </h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Placa do Cavalinho</label>
+                        <p class="text-sm text-gray-900 font-mono">{{ driver.cavalinho_plate or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Modelo</label>
+                        <p class="text-sm text-gray-900">{{ driver.cavalinho_model or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Ano</label>
+                        <p class="text-sm text-gray-900">{{ driver.cavalinho_year or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">CRLV do Cavalinho</label>
+                        <p class="mt-1 text-sm text-gray-900">
+                            {% if driver.cavalinho_crlv %}
+                                <a href="{{ url_for('drivers.download_document', driver_id=driver.id, doc_type='cavalinho_crlv') }}" class="text-orange-600 hover:text-orange-800">
+                                    <i class="fas fa-download mr-1"></i>Download
+                                </a>
+                            {% else %}
+                                Não enviado
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Documentos -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900 flex items-center">
+                    <i class="fas fa-file-alt text-primary mr-2"></i>
+                    Documentos
+                </h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">CNH</label>
+                        <p class="mt-1 text-sm text-gray-900">
+                            {% if driver.cnh_document %}
+                                <a href="{{ url_for('drivers.download_document', driver_id=driver.id, doc_type='cnh') }}" class="text-primary hover:text-primary-dark">
+                                    <i class="fas fa-download mr-1"></i>Download
+                                </a>
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">{% if driver.truck_type == 'carreta' %}CRLV da Carreta{% else %}Documento do Veículo{% endif %}</label>
+                        <p class="mt-1 text-sm text-gray-900">
+                            {% if driver.crlv_document %}
+                                <a href="{{ url_for('drivers.download_document', driver_id=driver.id, doc_type='crlv') }}" class="text-primary hover:text-primary-dark">
+                                    <i class="fas fa-download mr-1"></i>Download
+                                </a>
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Comprovante de Residência</label>
+                        <p class="mt-1 text-sm text-gray-900">
+                            {% if driver.address_proof %}
+                                <a href="{{ url_for('drivers.download_document', driver_id=driver.id, doc_type='address') }}" class="text-primary hover:text-primary-dark">
+                                    <i class="fas fa-download mr-1"></i>Download
+                                </a>
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Foto do Veículo</label>
+                        <p class="mt-1 text-sm text-gray-900">
+                            {% if driver.vehicle_photo %}
+                                <a href="{{ url_for('drivers.download_document', driver_id=driver.id, doc_type='vehicle_photo') }}" class="text-primary hover:text-primary-dark">
+                                    <i class="fas fa-download mr-1"></i>Download
+                                </a>
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dados Bancários -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900 flex items-center">
+                    <i class="fas fa-university text-primary mr-2"></i>
+                    Dados Bancários
+                </h3>
+            </div>
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Banco</label>
+                        <p class="text-sm text-gray-900">{{ driver.bank_name or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Agência</label>
+                        <p class="text-sm text-gray-900">{{ driver.agency or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Conta</label>
+                        <p class="text-sm text-gray-900">{{ driver.account or '-' }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-500">Chave PIX</label>
+                        <p class="text-sm text-gray-900 break-all">{{ driver.pix_key or '-' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar com Status e Ações -->
+    <div class="space-y-6">
+        <!-- Status Card -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900">Status do Motorista</h3>
+            </div>
+            <div class="px-6 py-4 space-y-4">
+                <div class="flex items-center justify-between">
+                    <span class="text-sm font-medium text-gray-500">Status Atual</span>
+                    <span class="px-3 py-1 text-sm font-semibold rounded-full 
+                               {{ 'bg-green-100 text-green-800' if driver.is_active else 'bg-red-100 text-red-800' }}">
+                        {{ 'Ativo' if driver.is_active else 'Inativo' }}
+                    </span>
+                </div>
+
+                <div class="flex items-center justify-between">
+                    <span class="text-sm font-medium text-gray-500">Cadastrado em</span>
+                    <span class="text-sm text-gray-900">{{ driver.created_at.strftime('%d/%m/%Y') if driver.created_at else '-' }}</span>
+                </div>
+
+                <div class="flex items-center justify-between">
+                    <span class="text-sm font-medium text-gray-500">Cadastrado por</span>
+                    <span class="text-sm text-gray-900">{{ driver.creator.username if driver.creator else '-' }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h3 class="text-lg font-medium text-gray-900">Ações Rápidas</h3>
+            </div>
+            <div class="px-6 py-4 space-y-3">
+                <a href="tel:{{ driver.phone }}" class="w-full flex items-center px-3 py-2 bg-green-50 text-green-700 rounded-md hover:bg-green-100 transition">
+                    <i class="fas fa-phone mr-2"></i>
+                    Ligar para Motorista
+                </a>
+
+                {% if driver.email %}
+                <a href="mailto:{{ driver.email }}" class="w-full flex items-center px-3 py-2 bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 transition">
+                    <i class="fas fa-envelope mr-2"></i>
+                    Enviar E-mail
+                </a>
+                {% endif %}
+
+                <a href="#" onclick="sendWhatsApp('{{ driver.phone }}', '{{ driver.name }}')" class="w-full flex items-center px-3 py-2 bg-green-50 text-green-700 rounded-md hover:bg-green-100 transition">
+                    <i class="fab fa-whatsapp mr-2"></i>
+                    WhatsApp
+                </a>
+
+                {% if current_user.role in ['admin', 'operador'] %}
+                <button onclick="toggleStatus({{ driver.id }}, {{ driver.is_active|lower }})" class="w-full flex items-center px-3 py-2 {{ 'bg-red-50 text-red-700 hover:bg-red-100' if driver.is_active else 'bg-green-50 text-green-700 hover:bg-green-100' }} rounded-md transition">
+                    <i class="fas fa-{{ 'ban' if driver.is_active else 'check' }} mr-2"></i>
+                    {{ 'Desativar' if driver.is_active else 'Ativar' }} Motorista
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function confirmDelete(driverId, driverName) {
+  document.getElementById('delete-driver-name').textContent = driverName;
+  document.getElementById('delete-form').action = '/drivers/' + driverId + '/delete';
+  document.getElementById('modal-delete-confirm').classList.remove('hidden');
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var delModal = document.getElementById('modal-delete-confirm');
+  if (delModal) delModal.addEventListener('click', function(e) {
+    if (e.target === this) this.classList.add('hidden');
+  });
+});
+
+function sendWhatsApp(phone, name) {
+    const cleanPhone = phone.replace(/\D/g, '');
+    const message = `Olá ${name}, tudo bem? Aqui é da EMALOG.`;
+    const url = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
+}
+
+function toggleStatus(driverId, currentStatus) {
+    const action = currentStatus ? 'desativar' : 'ativar';
+
+    if (!confirm(`Tem certeza que deseja ${action} este motorista?`)) {
+        return;
+    }
+
+    fetch(`/drivers/${driverId}/toggle-status`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.message || 'Erro ao alterar status do motorista');
+        }
+    })
+    .catch(error => {
+        console.error('Erro:', error);
+        alert('Erro ao comunicar com o servidor');
+    });
+}
+</script>
+{% endblock %}

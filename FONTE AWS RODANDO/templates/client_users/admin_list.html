@@ -1,0 +1,176 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}Usuários de {{ client.company_name }} - EMALOG{% endblock %}
+{% block page_title %}Usuários do Cliente{% endblock %}
+{% block page_description %}Gerenciar usuários de {{ client.company_name }} (máx. 5){% endblock %}
+
+{% block header_actions %}
+<div class="flex space-x-3">
+    <a href="{{ url_for('clients.index') }}" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition">
+        <i class="fas fa-arrow-left mr-2"></i>Voltar a Clientes
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Client Info -->
+<div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6 rounded-lg">
+    <div class="flex items-center justify-between">
+        <div>
+            <p class="text-sm font-semibold text-blue-800">{{ client.company_name }}</p>
+            <p class="text-xs text-blue-600">CNPJ: {{ client.cnpj }} &bull; Usuários: {{ users|length }}/5</p>
+        </div>
+        {% if users|length < 5 %}
+        <button onclick="document.getElementById('newUserModal').classList.remove('hidden')"
+                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm">
+            <i class="fas fa-user-plus mr-2"></i>Novo Usuário
+        </button>
+        {% else %}
+        <span class="text-xs text-orange-600 font-medium">Limite de 5 usuários atingido</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Users Table -->
+<div class="bg-white rounded-lg shadow">
+    <div class="px-6 py-4 border-b border-gray-200">
+        <h3 class="text-lg font-medium text-gray-900">Usuários Cadastrados ({{ users|length }})</h3>
+    </div>
+    {% if users %}
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Usuário</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Último Login</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Criado em</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ações</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+                {% for user in users %}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center">
+                            <div class="h-9 w-9 rounded-full bg-blue-100 flex items-center justify-center mr-3">
+                                <i class="fas fa-user text-blue-600 text-sm"></i>
+                            </div>
+                            <div>
+                                <div class="text-sm font-medium text-gray-900">{{ user.username }}</div>
+                                <div class="text-xs text-gray-500">{{ user.email }}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                                   {{ 'bg-green-100 text-green-800' if user.active else 'bg-red-100 text-red-800' }}">
+                            {{ 'Ativo' if user.active else 'Inativo' }}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {{ user.last_login.strftime('%d/%m/%Y %H:%M') if user.last_login else 'Nunca' }}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {{ user.created_at.strftime('%d/%m/%Y') }}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div class="flex space-x-3">
+                            <button onclick="resetPassword({{ user.id }}, '{{ user.username }}')"
+                                    class="text-orange-600 hover:text-orange-800" title="Resetar senha">
+                                <i class="fas fa-key"></i>
+                            </button>
+                            <button onclick="toggleStatus({{ user.id }}, '{{ user.username }}', {{ user.active|tojson }})"
+                                    class="text-{{ 'red' if user.active else 'green' }}-600 hover:text-{{ 'red' if user.active else 'green' }}-800"
+                                    title="{{ 'Desativar' if user.active else 'Ativar' }}">
+                                <i class="fas fa-{{ 'ban' if user.active else 'check-circle' }}"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="px-6 py-10 text-center">
+        <i class="fas fa-users text-gray-300 text-4xl mb-3"></i>
+        <p class="text-gray-500 mb-4">Nenhum usuário cadastrado para este cliente.</p>
+        <button onclick="document.getElementById('newUserModal').classList.remove('hidden')"
+                class="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+            <i class="fas fa-user-plus mr-2"></i>Criar Primeiro Usuário
+        </button>
+    </div>
+    {% endif %}
+</div>
+
+<!-- New User Modal -->
+<div id="newUserModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 hidden">
+    <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-medium text-gray-900">Novo Usuário para {{ client.company_name }}</h3>
+            <button onclick="document.getElementById('newUserModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <form method="POST" action="{{ url_for('client_users.admin_new', client_id=client.id) }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Nome de Usuário <span class="text-red-500">*</span></label>
+                <input type="text" name="username" required
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                       placeholder="nome.sobrenome">
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">E-mail <span class="text-red-500">*</span></label>
+                <input type="email" name="email" required
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                       placeholder="usuario@empresa.com.br">
+            </div>
+            <div class="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
+                <p class="text-xs text-yellow-700">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    A senha padrão será <strong>EMALOG{{ current_year }}</strong>. O usuário deverá alterá-la no primeiro login.
+                </p>
+            </div>
+            <div class="flex space-x-3">
+                <button type="submit" class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition">
+                    <i class="fas fa-save mr-2"></i>Criar Usuário
+                </button>
+                <button type="button" onclick="document.getElementById('newUserModal').classList.add('hidden')"
+                        class="flex-1 bg-gray-300 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-400 transition">
+                    Cancelar
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function toggleStatus(userId, username, isActive) {
+    const action = isActive ? 'desativar' : 'ativar';
+    if (confirm(`Deseja ${action} o usuário ${username}?`)) {
+        fetch(`/client/users/admin/{{ client.id }}/user/${userId}/toggle`, { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) { location.reload(); }
+                else { alert('Erro: ' + data.message); }
+            });
+    }
+}
+
+function resetPassword(userId, username) {
+    if (confirm(`Resetar senha de ${username}? A nova senha padrão será gerada automaticamente.`)) {
+        fetch(`/client/users/admin/{{ client.id }}/user/${userId}/reset-password`, { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`Senha resetada!\n\nNova senha: ${data.password}\n\nO usuário deve alterá-la no próximo login.`);
+                } else {
+                    alert('Erro: ' + data.message);
+                }
+            });
+    }
+}
+</script>
+{% endblock %}
