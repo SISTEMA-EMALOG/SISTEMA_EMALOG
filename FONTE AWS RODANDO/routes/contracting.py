@@ -391,6 +391,25 @@ def conversation_mode(driver_id):
     return jsonify({'ok': True, 'mode': mode})
 
 
+@contracting_bp.route('/api/ema/whatsapp/qr')
+@login_required
+def ema_whatsapp_qr():
+    if not _staff_only():
+        return _forbidden()
+    from utils.evolution_api import get_qr_code
+    result = get_qr_code()
+    return jsonify(result), (200 if result.get('ok') else 502)
+
+
+@contracting_bp.route('/api/ema/whatsapp/status')
+@login_required
+def ema_whatsapp_status():
+    if not _staff_only():
+        return _forbidden()
+    from utils.evolution_api import get_connection_status
+    return jsonify(get_connection_status())
+
+
 @contracting_bp.route('/api/ema/webhook/configure', methods=['POST'])
 @login_required
 def configure_ema_webhook():
