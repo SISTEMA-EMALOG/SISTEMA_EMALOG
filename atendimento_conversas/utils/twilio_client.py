@@ -25,6 +25,7 @@ import hashlib
 import hmac
 import logging
 import os
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -107,21 +108,34 @@ def validate_signature(url, params, signature, token=None):
 
 def webhook_url(request):
     """
-    A URL que a Twilio usou para assinar.
+    A URL que a Twilio usou para assinar esta requisição.
 
-    A app roda atrás do balanceador do Elastic Beanstalk, que termina o
-    HTTPS. Sem ProxyFix, request.url viria como http:// e a assinatura nunca
-    bateria. O ProxyFix está ligado em app.py com x_proto e x_host, então
-    request.url já reflete o esquema e o host públicos.
+    A app roda atrás do balanceador do Elastic Beanstalk. O ProxyFix está
+    ligado em app.py com x_proto e x_host, então request.url normalmente já
+    reflete o esquema e o host públicos. Ainda assim a reconstrução pode
+    divergir, por host alternativo ou porta.
 
-    Ainda assim é possível que a reconstrução divirja, por barra final ou
-    host alternativo. TWILIO_WEBHOOK_URL permite fixar a URL exata
-    configurada no console da Twilio, sem mexer em código.
+    TWILIO_WEBHOOK_URL fixa o endereço público. Dela são aproveitados apenas
+    o ESQUEMA e o HOST: o caminho vem sempre da requisição real. Sem isso,
+    fixar a URL de entrada faria o callback de status validar contra o
+    caminho errado e recusar tudo com 403, porque os dois endpoints passam
+    por aqui.
     """
     fixa = os.environ.get('TWILIO_WEBHOOK_URL', '').strip()
-    if fixa and 'PREENCHER' not in fixa:
-        return fixa
-    return request.url
+    if not fixa or 'PREENCHER' in fixa:
+        return request.url
+
+    try:
+        partes = urlsplit(fixa)
+        if not partes.scheme or not partes.netloc:
+            return request.url
+    except Exception:
+        return request.url
+
+    atual = urlsplit(request.url)
+    return urlunsplit((
+        partes.scheme, partes.netloc, atual.path, atual.query, '',
+    ))
 
 
 # ── Envio ────────────────────────────────────────────────────────────────────
