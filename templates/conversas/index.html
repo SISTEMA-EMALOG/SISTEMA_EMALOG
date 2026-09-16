@@ -1,0 +1,124 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Central de Atendimento - EMALOG{% endblock %}
+{% block page_title %}Central de Atendimento{% endblock %}
+{% block page_description %}Conversas de WhatsApp da operação, em tempo real{% endblock %}
+
+{% block head %}
+<style>
+/* Layout herdado da Central de Conversas anterior, que estava órfão em
+   templates/contracting/index.html. Mantido aqui, onde de fato é usado. */
+.conv-layout{display:grid;grid-template-columns:minmax(250px,320px) minmax(360px,1fr) minmax(240px,300px);width:100%;height:clamp(520px,calc(100dvh - 270px),760px);min-height:0;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#fff}
+.conv-list,.conv-main,.conv-context{min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.conv-list{border-right:1px solid #e5e7eb;background:#fff}
+#convItems{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.conv-context{border-left:1px solid #e5e7eb;overflow-y:auto;overscroll-behavior:contain;background:#fff}
+.conv-scroller{flex:1;min-height:0;background:#f8fafc;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;overflow-wrap:anywhere;padding:18px}
+#convForm{flex:0 0 auto;background:#fff;border-top:1px solid #e5e7eb}
+#convInput{min-height:44px;max-height:120px;overflow-y:auto}
+.msg-in,.msg-out{overflow-wrap:anywhere;word-break:break-word;max-width:78%;padding:9px 13px;margin-bottom:9px;font-size:14px;line-height:1.5;white-space:pre-wrap}
+.msg-in{background:#fff;border:1px solid #e5e7eb;border-radius:4px 14px 14px 14px}
+.msg-out{background:#171717;color:#fff;border-radius:14px 4px 14px 14px;margin-left:auto}
+.conv-item{display:block;width:100%;text-align:left;padding:12px 14px;border-bottom:1px solid #f1f2f4;cursor:pointer;background:#fff}
+.conv-item:hover{background:#fafafa}
+.conv-item.is-active{background:#fff7f8;box-shadow:inset 3px 0 0 #e61d43}
+.status-pill{font-size:11px;font-weight:700;border-radius:999px;padding:3px 8px}
+.skeleton{background:linear-gradient(90deg,#e8ebee 25%,#f5f6f7 50%,#e8ebee 75%);background-size:200% 100%;animation:sk 1.4s infinite}
+@keyframes sk{to{background-position:-200% 0}}
+@media(max-width:1180px){.conv-layout{grid-template-columns:minmax(230px,280px) minmax(0,1fr)}.conv-context{display:none}}
+@media(max-width:700px){.conv-layout{display:flex;height:auto;flex-direction:column}.conv-list{border-right:0;border-bottom:1px solid #e5e7eb;max-height:260px}.conv-main{height:min(620px,calc(100dvh - 110px));min-height:480px}.conv-context{display:none}}
+@media(prefers-reduced-motion:reduce){.skeleton{animation:none}}
+</style>
+{% endblock %}
+
+{% block header_actions %}
+<button type="button" id="convRefresh"
+        class="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold">
+  <i class="fas fa-sync-alt" aria-hidden="true"></i><span>Atualizar</span>
+</button>
+{% endblock %}
+
+{% block content %}
+{% if not twilio_configurado %}
+<div class="rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-900 mb-4" role="status">
+  <i class="fas fa-triangle-exclamation mr-2" aria-hidden="true"></i>
+  A Twilio ainda não está configurada. As conversas aparecem, mas o envio fica bloqueado.
+  Preencha <strong>TWILIO_ACCOUNT_SID</strong>, <strong>TWILIO_AUTH_TOKEN</strong> e
+  <strong>TWILIO_WHATSAPP_NUMBER</strong> no ambiente.
+</div>
+{% endif %}
+
+<div id="convStatus" class="hidden rounded-lg border px-4 py-3 text-sm mb-4" role="status" aria-live="polite"></div>
+
+<div class="conv-layout">
+  <!-- Lista -->
+  <div class="conv-list">
+    <div class="p-3 border-b border-gray-100 flex-shrink-0">
+      <label for="convSearch" class="sr-only">Buscar conversa</label>
+      <div class="relative">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" aria-hidden="true"></i>
+        <input id="convSearch" type="search" placeholder="Buscar por nome ou telefone"
+               class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm">
+      </div>
+      <div class="flex gap-1 mt-2" id="convFilters" role="group" aria-label="Filtrar conversas">
+        <button type="button" class="conv-filter px-2.5 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-bold" data-status="ativas">Ativas</button>
+        <button type="button" class="conv-filter px-2.5 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-bold" data-status="resolvida">Resolvidas</button>
+        <button type="button" class="conv-filter px-2.5 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-bold" data-status="">Todas</button>
+      </div>
+    </div>
+    <div id="convItems">
+      <div class="p-3 space-y-2" id="convSkeleton">
+        <div class="skeleton h-14 rounded-lg"></div>
+        <div class="skeleton h-14 rounded-lg"></div>
+        <div class="skeleton h-14 rounded-lg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Thread -->
+  <div class="conv-main">
+    <header id="convHeader" class="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3 flex-shrink-0">
+      <div class="min-w-0">
+        <h2 id="convTitle" class="text-sm font-extrabold text-gray-900 truncate">Selecione uma conversa</h2>
+        <p id="convSubtitle" class="text-xs text-gray-500 truncate">A lista ao lado mostra quem escreveu.</p>
+      </div>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <span id="convStatusPill" class="status-pill bg-gray-100 text-gray-600 hidden"></span>
+        <button type="button" id="convResolve"
+                class="hidden px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-bold hover:bg-gray-200">
+          Resolver
+        </button>
+      </div>
+    </header>
+
+    <div class="conv-scroller" id="convMessages">
+      <div class="h-full flex flex-col items-center justify-center text-center text-gray-400">
+        <i class="fab fa-whatsapp text-4xl mb-3" aria-hidden="true"></i>
+        <p class="text-sm">Nenhuma conversa aberta.</p>
+      </div>
+    </div>
+
+    <form id="convForm" class="p-3 flex items-end gap-2">
+      <div class="flex-1">
+        <label for="convInput" class="sr-only">Mensagem</label>
+        <textarea id="convInput" rows="1" maxlength="2000" disabled
+                  placeholder="Selecione uma conversa para responder"
+                  class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-300"></textarea>
+      </div>
+      <button type="submit" id="convSend" disabled
+              class="btn-primary flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full disabled:opacity-40"
+              title="Enviar" aria-label="Enviar mensagem">
+        <i class="fas fa-paper-plane text-sm" aria-hidden="true"></i>
+      </button>
+    </form>
+  </div>
+
+  <!-- Contexto -->
+  <aside class="conv-context" id="convContext" aria-label="Contexto do contato">
+    <div class="p-4 text-sm text-gray-400">Sem contato selecionado.</div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/conversas.js', v='20260916-fase1') }}"></script>
+{% endblock %}

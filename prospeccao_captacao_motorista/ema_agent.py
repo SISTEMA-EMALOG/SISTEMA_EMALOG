@@ -332,12 +332,31 @@ def _process_single_message(msg_data: dict):
         driver_for_message = active_bid.driver
     else:
         driver_for_message = _find_driver_by_phone(phone)
+    # Central de Atendimento: toda mensagem recebida pertence a uma conversa,
+    # inclusive as que chegam por este canal. Sem isto, a tela de Conversas
+    # mostraria só o que vem pela Twilio e o histórico da Evolution sumiria.
+    #
+    # Resolvida ANTES do add do inbound de propósito: em corrida, a
+    # recuperação de get_or_create_conversation é um rollback, que desfaria
+    # qualquer coisa já pendente nesta mesma sessão.
+    conversa = None
+    try:
+        from atendimento_conversas.utils.conversas_service import (
+            get_or_create_conversation,
+        )
+        conversa, _nova = get_or_create_conversation(
+            phone, driver=driver_for_message
+        )
+    except Exception as conv_exc:
+        logger.warning(f"⚠️ Conversas: falha ao vincular conversa de {phone}: {conv_exc}")
+
     inbound = existing_inbound or WhatsAppMessage(
         driver_id=driver_for_message.id if driver_for_message else None,
         freight_id=active_bid.freight_id if active_bid else None,
         phone_number=phone, message_content=text, direction='inbound',
         source='ema' if ema_session else ('freight' if active_bid else 'general'),
         status='recebido', external_message_id=external_id,
+        conversation_id=conversa.id if conversa is not None else None,
     )
     if not existing_inbound:
         db.session.add(inbound)

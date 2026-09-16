@@ -190,6 +190,7 @@
                     {{ nav_link(url_for('chat.index'),      request.endpoint.startswith('chat'),     'fa-comments',       'Chat') }}
 
                     {% if current_user.role in ['admin', 'operador', 'vendedor'] %}
+                    {{ nav_link(url_for('conversas.index'), request.endpoint.startswith('conversas'), 'fa-comment-dots', 'Conversas') }}
                     {% if current_user.role in ['admin', 'operador'] %}
                     {{ nav_link(url_for('contracting.index'), request.endpoint.startswith('contracting'), 'fa-columns', 'Contratação') }}
                     {% endif %}
