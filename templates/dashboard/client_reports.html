@@ -1,0 +1,615 @@
+{% extends "dashboard_client_base.html" %}
+
+{% block title %}Relatórios — {{ client.company_name }} - EMALOG{% endblock %}
+{% block page_title %}Relatórios{% endblock %}
+{% block page_description %}{{ client.company_name }} · Dados operacionais, financeiros e SLA{% endblock %}
+
+{% block header_actions %}
+<div class="flex items-center gap-2 flex-wrap">
+    <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1 text-xs font-medium">
+        {% for lbl, val in [('Mês','1m'),('3m','3m'),('6m','6m'),('12m','12m'),('Tudo','all')] %}
+        <a href="{{ url_for('dashboard.client_reports', period=val) }}"
+           class="px-2.5 py-1 rounded-md transition
+                  {% if period == val %}bg-white text-blue-700 shadow-sm font-semibold{% else %}text-gray-500 hover:text-gray-700{% endif %}">
+            {{ lbl }}
+        </a>{% endfor %}
+    </div>
+    <div class="relative" id="exportMenu">
+        <button onclick="toggleExport()"
+                class="inline-flex items-center px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition shadow-sm gap-1.5">
+            <i class="fas fa-download text-gray-400 text-xs"></i>Exportar
+            <i class="fas fa-chevron-down text-gray-400 text-xs" id="exportChevron"></i>
+        </button>
+        <div id="exportDropdown" class="hidden absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden">
+            <div class="p-3 space-y-2">
+                <a href="{{ url_for('dashboard.client_export', type='excel', period=period) }}"
+                   class="flex items-center gap-3 p-2.5 rounded-xl border border-green-100 bg-green-50 hover:bg-green-100 transition">
+                    <div class="w-8 h-8 bg-green-600 rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas fa-file-excel text-white text-sm"></i></div>
+                    <div><p class="text-sm font-semibold text-green-800">Excel Completo</p><p class="text-xs text-green-600">Fretes, KPIs, Rotas…</p></div>
+                </a>
+                <a href="{{ url_for('dashboard.client_export', type='csv', period=period) }}"
+                   class="flex items-center gap-3 p-2.5 rounded-xl border border-blue-100 bg-blue-50 hover:bg-blue-100 transition">
+                    <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas fa-file-csv text-white text-sm"></i></div>
+                    <div><p class="text-sm font-semibold text-blue-800">CSV — Fretes</p><p class="text-xs text-blue-600">Power BI, Sheets…</p></div>
+                </a>
+            </div>
+            <div class="px-4 py-2 bg-gray-50 border-t border-gray-100 text-xs text-gray-400 text-center">
+                <i class="fas fa-lock mr-1"></i>Seus dados · {{ {'1m':'Este mês','3m':'3 meses','6m':'6 meses','12m':'12 meses','all':'Histórico'}.get(period,'Tudo') }}
+            </div>
+        </div>
+    </div>
+    <a href="{{ url_for('dashboard.client_dashboard') }}"
+       class="inline-flex items-center px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition shadow-sm gap-1.5">
+        <i class="fas fa-arrow-left text-gray-400 text-xs"></i>Dashboard
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+
+{# Info de período #}
+<div class="mb-4 flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700">
+    <i class="fas fa-info-circle text-blue-400 flex-shrink-0"></i>
+    Período: <strong class="ml-1">{{ {'1m':'Este mês','3m':'Últimos 3 meses','6m':'Últimos 6 meses','12m':'Últimos 12 meses','all':'Histórico completo'}.get(period,'Tudo') }}</strong>
+    · <strong>{{ total_freights }}</strong> frete(s).
+</div>
+
+{# KPIs gerais #}
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+    {% set kpis_list = [
+        ('Total Fretes',    total_freights,    'fas fa-truck',         'bg-blue-50 border-blue-100',     'text-blue-700',    'text-blue-400'),
+        ('Entregues',       delivered_count,   'fas fa-check-circle',  'bg-green-50 border-green-100',   'text-green-700',   'text-green-400'),
+        ('Em Trânsito',     in_transit_count,  'fas fa-shipping-fast', 'bg-yellow-50 border-yellow-100', 'text-yellow-700',  'text-yellow-400'),
+        ('Cancelados',      cancelled_count,   'fas fa-times-circle',  'bg-red-50 border-red-100',       'text-red-700',     'text-red-400'),
+        ('No Prazo',        on_time_rate,      'fas fa-stopwatch',     'bg-emerald-50 border-emerald-100','text-emerald-700', 'text-emerald-400'),
+        ('Este Mês',        this_month_count,  'fas fa-calendar-alt',  'bg-indigo-50 border-indigo-100', 'text-indigo-700',  'text-indigo-400'),
+    ] %}
+    {% for label, val, icon, bg, color, sub in kpis_list %}
+    <div class="flex flex-col items-center justify-center p-3 rounded-xl border {{ bg }}">
+        <i class="{{ icon }} {{ sub }} text-lg mb-1"></i>
+        <span class="text-2xl font-bold {{ color }}">{{ val }}{% if 'Prazo' in label %}%{% endif %}</span>
+        <span class="text-xs {{ sub }} font-medium mt-0.5 text-center leading-tight">{{ label }}</span>
+    </div>{% endfor %}
+</div>
+
+{# Tabs #}
+<div class="bg-white rounded-xl border border-gray-100 shadow-sm mb-5">
+    <div class="border-b border-gray-100">
+        <nav class="flex overflow-x-auto" id="clientTabs">
+            <button onclick="showClientTab('operacional')" data-tab="operacional"
+                    class="ctab-btn active whitespace-nowrap px-4 py-3 text-sm font-semibold border-b-2 border-blue-600 text-blue-700 transition">
+                <i class="fas fa-truck mr-1.5"></i>Operacional
+            </button>
+            <button onclick="showClientTab('gastos')" data-tab="gastos"
+                    class="ctab-btn whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition">
+                <i class="fas fa-receipt mr-1.5"></i>Meus Gastos
+            </button>
+            <button onclick="showClientTab('sla')" data-tab="sla"
+                    class="ctab-btn whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition">
+                <i class="fas fa-stopwatch mr-1.5"></i>Meu SLA
+            </button>
+            <button onclick="showClientTab('cotacoes')" data-tab="cotacoes"
+                    class="ctab-btn whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition">
+                <i class="fas fa-file-invoice mr-1.5"></i>Cotações
+            </button>
+        </nav>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════ TAB: OPERACIONAL ══════════════════════════════════ -->
+<div id="ctab-operacional" class="ctab-content">
+
+    {# Resumo financeiro #}
+    <div class="mb-4 bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide"><i class="fas fa-receipt text-gray-400 mr-1.5"></i>Resumo Financeiro do Período</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
+            <div class="px-6 py-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Valor Total Contratado</p>
+                <p class="text-lg font-semibold text-gray-700">R$ {{ '{:,.2f}'.format(total_revenue).replace(',','X').replace('.',',').replace('X','.') }}</p>
+                <p class="text-xs text-gray-400 mt-0.5">{{ total_freights }} frete(s)</p>
+            </div>
+            <div class="px-6 py-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Valor Este Mês</p>
+                <p class="text-lg font-semibold text-gray-700">R$ {{ '{:,.2f}'.format(month_revenue).replace(',','X').replace('.',',').replace('X','.') }}</p>
+                <p class="text-xs text-gray-400 mt-0.5">{{ this_month_count }} frete(s) em {{ today.strftime('%B/%Y') }}</p>
+            </div>
+            <div class="px-6 py-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Valor Médio / Frete</p>
+                <p class="text-lg font-semibold text-gray-700">R$ {{ '{:,.2f}'.format(avg_ticket).replace(',','X').replace('.',',').replace('X','.') }}</p>
+                <p class="text-xs text-gray-400 mt-0.5">média do período</p>
+            </div>
+        </div>
+    </div>
+
+    {# Gráficos #}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-sm font-semibold text-gray-600 mb-4"><i class="fas fa-chart-bar mr-2 text-blue-400"></i>Volume de Fretes por Mês</h3>
+            <canvas id="chartVolume" height="140"></canvas>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-sm font-semibold text-gray-600 mb-4"><i class="fas fa-chart-line mr-2 text-green-400"></i>Valor Contratado por Mês (R$)</h3>
+            <canvas id="chartRevenue" height="140"></canvas>
+        </div>
+    </div>
+
+    {# Pontualidade + Operacional #}
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-sm font-semibold text-gray-600 mb-4"><i class="fas fa-stopwatch mr-2 text-emerald-400"></i>Pontualidade</h3>
+            <div class="flex flex-col items-center">
+                <canvas id="chartOntime" width="140" height="140"></canvas>
+                <p class="text-2xl font-bold mt-2 {% if on_time_rate >= 80 %}text-green-600{% elif on_time_rate >= 60 %}text-yellow-600{% else %}text-red-500{% endif %}">{{ on_time_rate }}%</p>
+                <p class="text-xs text-gray-400 mt-0.5">{{ on_time_count }} no prazo · {{ late_count }} atrasado(s)</p>
+            </div>
+        </div>
+        <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-sm font-semibold text-gray-600 mb-4"><i class="fas fa-list-ul mr-2 text-gray-400"></i>Indicadores Operacionais</h3>
+            <div class="grid grid-cols-2 gap-2">
+                {% set items = [
+                    ('Fretes Entregues',      delivered_count,           'text-green-700',  'bg-green-50'),
+                    ('Fretes em Trânsito',    in_transit_count,          'text-yellow-700', 'bg-yellow-50'),
+                    ('Cancelados',            cancelled_count,           'text-red-600',    'bg-red-50'),
+                    ('Este Mês',              this_month_count,          'text-indigo-700', 'bg-indigo-50'),
+                    ('Cotações Total',        total_quotes,              'text-purple-700', 'bg-purple-50'),
+                    ('Ag. Precificação',      pending_quotes,            'text-orange-700', 'bg-orange-50'),
+                ] %}
+                {% if awaiting_approval_quotes > 0 %}
+                <div class="col-span-2 flex items-center justify-between px-3 py-2 bg-blue-50 rounded-lg border border-blue-200">
+                    <span class="text-xs font-semibold text-blue-800 flex items-center gap-1"><i class="fas fa-clock text-blue-500"></i>Aguardando sua aprovação</span>
+                    <span class="text-base font-bold text-blue-700">{{ awaiting_approval_quotes }}</span>
+                </div>{% endif %}
+                {% for label, val, color, bg in items %}
+                <div class="flex items-center justify-between px-3 py-2 {{ bg }} rounded-lg">
+                    <span class="text-xs text-gray-600">{{ label }}</span>
+                    <span class="text-base font-bold {{ color }}">{{ val }}</span>
+                </div>{% endfor %}
+            </div>
+        </div>
+    </div>
+
+    {# Rotas + Distribuição #}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-sm font-semibold text-gray-600 mb-4"><i class="fas fa-route mr-2 text-blue-400"></i>Rotas Mais Frequentes</h3>
+            {% if top_routes %}
+            <div class="space-y-2.5">
+                {% for route, cnt in top_routes %}
+                {% set pct = (cnt / total_freights * 100) | round(1) if total_freights else 0 %}
+                <div>
+                    <div class="flex items-center justify-between text-xs mb-0.5">
+                        <span class="text-gray-600 truncate mr-2">{{ route }}</span>
+                        <span class="text-gray-400 whitespace-nowrap">{{ cnt }}× ({{ pct }}%)</span>
+                    </div>
+                    <div class="w-full bg-gray-100 rounded-full h-1.5"><div class="bg-blue-400 h-1.5 rounded-full" style="width:{{ pct }}%"></div></div>
+                </div>{% endfor %}
+            </div>
+            {% else %}<p class="text-sm text-gray-400 text-center py-6">Nenhuma rota no período.</p>{% endif %}
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-sm font-semibold text-gray-600 mb-4"><i class="fas fa-boxes mr-2 text-purple-400"></i>Tipo de Carga · Veículo</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <p class="text-xs text-gray-400 font-medium mb-2 uppercase tracking-wide">Carga</p>
+                    {% if load_type_counter %}{% for tp, cnt in load_type_counter.items() | sort(attribute='1', reverse=True) %}<div class="flex items-center justify-between text-xs py-1 border-b border-gray-50"><span class="text-gray-600 capitalize">{{ tp }}</span><span class="text-gray-500 font-medium">{{ cnt }}</span></div>{% endfor %}{% else %}<p class="text-xs text-gray-400">–</p>{% endif %}
+                </div>
+                <div>
+                    <p class="text-xs text-gray-400 font-medium mb-2 uppercase tracking-wide">Veículo</p>
+                    {% if vehicle_counter %}{% for vt, cnt in vehicle_counter.items() | sort(attribute='1', reverse=True) %}<div class="flex items-center justify-between text-xs py-1 border-b border-gray-50"><span class="text-gray-600 uppercase">{{ vt }}</span><span class="text-gray-500 font-medium">{{ cnt }}</span></div>{% endfor %}{% else %}<p class="text-xs text-gray-400">–</p>{% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Histórico mensal #}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-4">
+        <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide"><i class="fas fa-table mr-1.5 text-gray-400"></i>Histórico Mensal Detalhado</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-50">
+                <thead class="bg-gray-50"><tr>
+                    <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Mês</th>
+                    <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Fretes</th>
+                    <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Valor Contratado</th>
+                    <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Média / Frete</th>
+                </tr></thead>
+                <tbody class="divide-y divide-gray-50">
+                    {% for row in monthly_rows | reverse %}{% if row.count > 0 %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-2.5 text-sm font-medium text-gray-700">{{ row.label }}</td>
+                        <td class="px-4 py-2.5 text-sm text-right text-gray-600">{{ row.count }}</td>
+                        <td class="px-4 py-2.5 text-sm text-right text-gray-600">R$ {{ '{:,.2f}'.format(row.revenue).replace(',','X').replace('.',',').replace('X','.') }}</td>
+                        <td class="px-4 py-2.5 text-sm text-right text-gray-500">{% if row.count > 0 %}R$ {{ '{:,.2f}'.format(row.revenue / row.count).replace(',','X').replace('.',',').replace('X','.') }}{% else %}—{% endif %}</td>
+                    </tr>{% endif %}{% endfor %}
+                    {% if total_freights == 0 %}<tr><td colspan="4" class="px-4 py-8 text-center text-sm text-gray-400">Nenhum frete no período.</td></tr>{% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div><!-- /ctab-operacional -->
+
+<!-- ══════════════════════════════════ TAB: MEUS GASTOS ══════════════════════════════════ -->
+<div id="ctab-gastos" class="ctab-content hidden">
+
+    {# KPIs gastos #}
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Total no Período</p>
+            <p class="text-xl font-bold text-gray-800">R$ {{ '{:,.0f}'.format(total_revenue).replace(',','.') }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">{{ total_freights }} frete(s)</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Média Mensal</p>
+            {% set months_count = monthly_rows | selectattr('count', 'gt', 0) | list | length %}
+            <p class="text-xl font-bold text-gray-800">R$ {{ '{:,.0f}'.format(total_revenue / months_count if months_count else 0).replace(',','.') }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">{{ months_count }} mes(es) ativos</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Ticket Médio</p>
+            <p class="text-xl font-bold text-gray-800">R$ {{ '{:,.0f}'.format(avg_ticket).replace(',','.') }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">por frete</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Este Mês</p>
+            <p class="text-xl font-bold text-blue-600">R$ {{ '{:,.0f}'.format(month_revenue).replace(',','.') }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">{{ this_month_count }} frete(s)</p>
+        </div>
+    </div>
+
+    {# Gráficos de gastos #}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-sm font-semibold text-gray-600 mb-4"><i class="fas fa-chart-bar mr-2 text-green-400"></i>Gasto por Trimestre (R$)</h3>
+            {% if quarterly_list %}
+            <canvas id="chartQuarterly" height="140"></canvas>
+            {% else %}<p class="text-sm text-gray-400 text-center py-8">Sem dados trimestrais</p>{% endif %}
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-sm font-semibold text-gray-600 mb-4"><i class="fas fa-route mr-2 text-indigo-400"></i>Gasto por Rota (Top 8)</h3>
+            {% if spend_by_route %}
+            <canvas id="chartRouteSpend" height="140"></canvas>
+            {% else %}<p class="text-sm text-gray-400 text-center py-8">Sem dados de rota</p>{% endif %}
+        </div>
+    </div>
+
+    {# Tabela de gastos por rota #}
+    {% if spend_by_route %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-4">
+        <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide"><i class="fas fa-table mr-1.5 text-gray-400"></i>Detalhamento por Rota</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-50">
+                <thead class="bg-gray-50"><tr>
+                    <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">#</th>
+                    <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Rota</th>
+                    <th class="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 uppercase">Fretes</th>
+                    <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Valor Total</th>
+                    <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Valor Médio</th>
+                    <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">% do Total</th>
+                </tr></thead>
+                <tbody class="divide-y divide-gray-50">
+                    {% for r in spend_by_route %}
+                    {% set pct = (r.total / total_revenue * 100) | round(1) if total_revenue else 0 %}
+                    {% set avg_r = (r.total / r.count) | round(2) if r.count else 0 %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-2.5 text-sm font-bold text-gray-400">{{ loop.index }}</td>
+                        <td class="px-4 py-2.5 text-sm font-medium text-gray-800"><i class="fas fa-arrow-right text-indigo-400 mr-1 text-xs"></i>{{ r.rota }}</td>
+                        <td class="px-4 py-2.5 text-sm text-center"><span class="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-semibold">{{ r.count }}</span></td>
+                        <td class="px-4 py-2.5 text-sm text-right font-semibold text-gray-800">R$ {{ '{:,.2f}'.format(r.total).replace(',','X').replace('.',',').replace('X','.') }}</td>
+                        <td class="px-4 py-2.5 text-sm text-right text-gray-500">R$ {{ '{:,.2f}'.format(avg_r).replace(',','X').replace('.',',').replace('X','.') }}</td>
+                        <td class="px-4 py-2.5">
+                            <div class="flex items-center gap-2">
+                                <div class="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden"><div class="h-1.5 bg-indigo-400 rounded-full" style="width:{{ pct }}%"></div></div>
+                                <span class="text-xs text-gray-500 w-10">{{ pct }}%</span>
+                            </div>
+                        </td>
+                    </tr>{% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Tabela trimestral #}
+    {% if quarterly_list %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-4">
+        <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide"><i class="fas fa-calendar-alt mr-1.5 text-gray-400"></i>Resumo por Trimestre</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-50">
+                <thead class="bg-gray-50"><tr>
+                    <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Trimestre</th>
+                    <th class="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 uppercase">Fretes</th>
+                    <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Total (R$)</th>
+                    <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Média / Frete</th>
+                </tr></thead>
+                <tbody class="divide-y divide-gray-50">
+                    {% for q in quarterly_list %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-2.5 text-sm font-bold text-gray-700">{{ q.label }}</td>
+                        <td class="px-4 py-2.5 text-sm text-center text-gray-600">{{ q.count }}</td>
+                        <td class="px-4 py-2.5 text-sm text-right font-semibold text-gray-800">R$ {{ '{:,.2f}'.format(q.total).replace(',','X').replace('.',',').replace('X','.') }}</td>
+                        <td class="px-4 py-2.5 text-sm text-right text-gray-500">R$ {{ '{:,.2f}'.format(q.avg).replace(',','X').replace('.',',').replace('X','.') }}</td>
+                    </tr>{% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+</div><!-- /ctab-gastos -->
+
+<!-- ══════════════════════════════════ TAB: MEU SLA ══════════════════════════════════ -->
+<div id="ctab-sla" class="ctab-content hidden">
+
+    {# KPIs SLA #}
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Taxa SLA</p>
+            <p class="text-3xl font-bold {% if on_time_rate >= 80 %}text-green-600{% elif on_time_rate >= 60 %}text-yellow-600{% else %}text-red-500{% endif %}">{{ on_time_rate }}%</p>
+            <p class="text-xs text-gray-400 mt-0.5">entregas no prazo</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Analisados</p>
+            <p class="text-3xl font-bold text-gray-800">{{ delivered_count }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">fretes entregues</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">No Prazo</p>
+            <p class="text-3xl font-bold text-green-600">{{ on_time_count }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">entregas ok</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Atrasados</p>
+            <p class="text-3xl font-bold text-red-500">{{ late_count }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">com atraso</p>
+        </div>
+    </div>
+
+    {# Gauge + Timeline #}
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-sm font-semibold text-gray-600 mb-4"><i class="fas fa-tachometer-alt mr-2 text-emerald-400"></i>Pontualidade Geral</h3>
+            <div class="flex flex-col items-center">
+                <canvas id="chartSlaClient" width="160" height="160"></canvas>
+                <p class="text-3xl font-bold mt-2 {% if on_time_rate >= 80 %}text-green-600{% elif on_time_rate >= 60 %}text-yellow-600{% else %}text-red-500{% endif %}">{{ on_time_rate }}%</p>
+                <p class="text-xs text-gray-400 mt-1">{{ on_time_count }} no prazo · {{ late_count }} atrasado(s)</p>
+            </div>
+            {% if on_time_rate >= 80 %}
+            <div class="mt-4 p-3 bg-green-50 border border-green-100 rounded-lg text-xs text-green-700 text-center"><i class="fas fa-trophy mr-1 text-green-500"></i>Excelente! SLA acima da meta de 80%</div>
+            {% elif on_time_rate >= 60 %}
+            <div class="mt-4 p-3 bg-yellow-50 border border-yellow-100 rounded-lg text-xs text-yellow-700 text-center"><i class="fas fa-exclamation-triangle mr-1 text-yellow-400"></i>SLA abaixo do ideal — meta: 80%</div>
+            {% elif delivered_count > 0 %}
+            <div class="mt-4 p-3 bg-red-50 border border-red-100 rounded-lg text-xs text-red-700 text-center"><i class="fas fa-times-circle mr-1 text-red-400"></i>SLA crítico — melhorias em andamento</div>
+            {% endif %}
+        </div>
+
+        <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="px-5 py-3 bg-gray-50 border-b border-gray-100">
+                <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide"><i class="fas fa-list-check mr-1.5 text-gray-400"></i>Timeline de Entregas Recentes</h3>
+            </div>
+            {% if sla_timeline %}
+            <div class="divide-y divide-gray-50">
+                {% for s in sla_timeline %}
+                <div class="px-5 py-3 flex items-center justify-between hover:bg-gray-50">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <div class="w-7 h-7 flex-shrink-0 rounded-full flex items-center justify-center {% if s.on_time == true %}bg-green-100{% elif s.on_time == false %}bg-red-100{% else %}bg-gray-100{% endif %}">
+                            <i class="fas {% if s.on_time == true %}fa-check text-green-600{% elif s.on_time == false %}fa-clock text-red-500{% else %}fa-question text-gray-400{% endif %} text-xs"></i>
+                        </div>
+                        <div class="min-w-0">
+                            <p class="text-xs font-semibold text-gray-700 truncate">{{ s.numero }}</p>
+                            <p class="text-xs text-gray-400 truncate">{{ s.rota or '—' }}</p>
+                        </div>
+                    </div>
+                    <div class="text-right flex-shrink-0 ml-3">
+                        <div class="flex items-center gap-2 text-xs">
+                            <span class="text-gray-400">Previsto: <strong>{{ s.expected }}</strong></span>
+                            <span class="text-gray-400">Real: <strong>{{ s.actual }}</strong></span>
+                        </div>
+                        {% if s.delta is not none %}
+                        <span class="text-xs font-bold {% if s.delta <= 0 %}text-green-600{% else %}text-red-500{% endif %}">
+                            {% if s.delta <= 0 %}{{ s.delta * -1 }}d adiantado{% else %}+{{ s.delta }}d atraso{% endif %}
+                        </span>{% else %}<span class="text-xs text-gray-400">sem data prev.</span>{% endif %}
+                    </div>
+                </div>{% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-10 text-gray-400"><i class="fas fa-truck text-4xl mb-3"></i><p class="text-sm">Nenhuma entrega com prazo registrado</p></div>
+            {% endif %}
+        </div>
+    </div>
+
+</div><!-- /ctab-sla -->
+
+<!-- ══════════════════════════════════ TAB: COTAÇÕES ══════════════════════════════════ -->
+<div id="ctab-cotacoes" class="ctab-content hidden">
+
+    {# KPIs cotações #}
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Total</p>
+            <p class="text-2xl font-bold text-gray-800">{{ total_quotes }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">cotações</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center border-l-2 border-green-400">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Aprovadas</p>
+            <p class="text-2xl font-bold text-green-600">{{ aprovadas_q }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">{% if total_quotes %}{{ (aprovadas_q/total_quotes*100)|round(1) }}% taxa{% endif %}</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center border-l-2 border-red-400">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Negadas</p>
+            <p class="text-2xl font-bold text-red-500">{{ negadas_q }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">{% if total_quotes %}{{ (negadas_q/total_quotes*100)|round(1) }}%{% endif %}</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center border-l-2 border-yellow-400">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Pendentes</p>
+            <p class="text-2xl font-bold text-yellow-600">{{ pendentes_q }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">aguardando</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center border-l-2 border-indigo-400">
+            <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Resposta Média</p>
+            <p class="text-2xl font-bold text-indigo-600">{% if tempo_medio_resposta is not none %}{{ tempo_medio_resposta }}d{% else %}—{% endif %}</p>
+            <p class="text-xs text-gray-400 mt-0.5">dias úteis</p>
+        </div>
+    </div>
+
+    {# Aviso se há cotações aguardando aprovação #}
+    {% if awaiting_approval_quotes > 0 %}
+    <div class="mb-4 flex items-center justify-between px-5 py-3.5 bg-blue-50 border border-blue-200 rounded-xl">
+        <div class="flex items-center gap-3">
+            <i class="fas fa-bell text-blue-500 text-lg"></i>
+            <div>
+                <p class="text-sm font-semibold text-blue-800">{{ awaiting_approval_quotes }} cotaç{{ 'ão aguarda' if awaiting_approval_quotes == 1 else 'ões aguardam' }} sua aprovação</p>
+                <p class="text-xs text-blue-600">Verifique e aprove ou negocie diretamente com nossa equipe.</p>
+            </div>
+        </div>
+        <a href="{{ url_for('quotes.index') }}" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition">Ver cotações</a>
+    </div>
+    {% endif %}
+
+    {# Histórico recente #}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-4">
+        <div class="px-5 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide"><i class="fas fa-history mr-1.5 text-gray-400"></i>Últimas 10 Cotações</h3>
+            <a href="{{ url_for('quotes.index') }}" class="text-xs text-blue-600 hover:underline">Ver todas <i class="fas fa-arrow-right ml-0.5 text-xs"></i></a>
+        </div>
+        {% if cotacoes_recentes %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-50">
+                <thead class="bg-gray-50"><tr>
+                    <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Nº</th>
+                    <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Origem → Destino</th>
+                    <th class="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 uppercase">Status</th>
+                    <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Valor</th>
+                    <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Data</th>
+                </tr></thead>
+                <tbody class="divide-y divide-gray-50">
+                    {% set status_styles = {
+                        'pendente':'bg-gray-100 text-gray-600',
+                        'cotada':'bg-blue-100 text-blue-700',
+                        'aprovada':'bg-green-100 text-green-700',
+                        'aprovada_cliente':'bg-emerald-100 text-emerald-700',
+                        'negociacao':'bg-yellow-100 text-yellow-700',
+                        'negada':'bg-red-100 text-red-600',
+                    } %}
+                    {% for q in cotacoes_recentes %}
+                    {% set orig = q.origin_city ~ '/' ~ q.origin_state if q.origin_city else q.origin_cep or '—' %}
+                    {% set dest = q.destination_city ~ '/' ~ q.destination_state if q.destination_city else q.destination_cep or '—' %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-2.5 text-xs font-semibold text-gray-600">{{ q.quote_number }}</td>
+                        <td class="px-4 py-2.5 text-xs text-gray-700 max-w-xs truncate">{{ orig }} → {{ dest }}</td>
+                        <td class="px-4 py-2.5 text-center">
+                            <span class="px-2 py-0.5 rounded-full text-xs font-semibold {{ status_styles.get(q.status,'bg-gray-100 text-gray-600') }}">{{ q.status.replace('_',' ').title() }}</span>
+                        </td>
+                        <td class="px-4 py-2.5 text-xs text-right font-medium text-gray-700">{% if q.sale_value %}R$ {{ '{:,.2f}'.format(q.sale_value).replace(',','X').replace('.',',').replace('X','.') }}{% else %}—{% endif %}</td>
+                        <td class="px-4 py-2.5 text-xs text-right text-gray-400">{{ q.created_at.strftime('%d/%m/%y') if q.created_at else '—' }}</td>
+                    </tr>{% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}<p class="text-sm text-gray-400 text-center py-8">Nenhuma cotação registrada.</p>{% endif %}
+    </div>
+
+</div><!-- /ctab-cotacoes -->
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// Export dropdown
+function toggleExport() {
+    const dd = document.getElementById('exportDropdown');
+    const ch = document.getElementById('exportChevron');
+    dd.classList.toggle('hidden');
+    ch.classList.toggle('fa-chevron-down');
+    ch.classList.toggle('fa-chevron-up');
+}
+document.addEventListener('click', function(e) {
+    const menu = document.getElementById('exportMenu');
+    if (menu && !menu.contains(e.target)) {
+        const dd = document.getElementById('exportDropdown');
+        if (dd && !dd.classList.contains('hidden')) {
+            dd.classList.add('hidden');
+            document.getElementById('exportChevron').classList.replace('fa-chevron-up','fa-chevron-down');
+        }
+    }
+});
+
+// Tab switching
+const cTabRendered = {};
+function showClientTab(name) {
+    document.querySelectorAll('.ctab-content').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.ctab-btn').forEach(btn => {
+        btn.classList.remove('border-blue-600','text-blue-700','font-semibold');
+        btn.classList.add('border-transparent','text-gray-500','font-medium');
+    });
+    document.getElementById('ctab-' + name).classList.remove('hidden');
+    const active = document.querySelector('[data-tab="' + name + '"]');
+    active.classList.add('border-blue-600','text-blue-700','font-semibold');
+    active.classList.remove('border-transparent','text-gray-500','font-medium');
+    if (!cTabRendered[name]) { cTabRendered[name] = true; renderClientTab(name); }
+}
+
+// Chart data from server
+const monthlyLabels   = {{ monthly_labels | safe }};
+const monthlyVolumes  = {{ monthly_volumes | safe }};
+const monthlyRevenues = {{ monthly_revenues | safe }};
+const onTimeCount     = {{ on_time_count }};
+const lateCount       = {{ late_count }};
+const deliveredCount  = {{ delivered_count }};
+const chartQuarterly  = {{ chart_quarterly | safe }};
+const chartRouteSpend = {{ chart_route_spend | safe }};
+
+function renderClientTab(name) {
+    if (name === 'operacional') {
+        new Chart(document.getElementById('chartVolume'), {
+            type: 'bar',
+            data: { labels: monthlyLabels, datasets: [{ label: 'Fretes', data: monthlyVolumes, backgroundColor: 'rgba(59,130,246,0.65)', borderColor: '#3b82f6', borderWidth: 1, borderRadius: 3 }] },
+            options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0, font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } } }
+        });
+        new Chart(document.getElementById('chartRevenue'), {
+            type: 'line',
+            data: { labels: monthlyLabels, datasets: [{ label: 'Valor (R$)', data: monthlyRevenues, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.08)', borderWidth: 2, pointRadius: 3, tension: 0.4, fill: true }] },
+            options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { font: { size: 10 }, callback: v => 'R$' + (v/1000).toFixed(0) + 'k' } }, x: { ticks: { font: { size: 10 } } } } }
+        });
+        new Chart(document.getElementById('chartOntime'), {
+            type: 'doughnut',
+            data: { labels: ['No Prazo','Atrasados','Outros'], datasets: [{ data: [onTimeCount, lateCount, Math.max(0, deliveredCount - onTimeCount - lateCount)], backgroundColor: ['#10b981','#ef4444','#e5e7eb'], borderWidth: 0 }] },
+            options: { responsive: false, cutout: '68%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 8, font: { size: 10 } } } } }
+        });
+    } else if (name === 'gastos') {
+        if (chartQuarterly.labels.length)
+            new Chart(document.getElementById('chartQuarterly'), {
+                type: 'bar',
+                data: { labels: chartQuarterly.labels, datasets: [{ label: 'Total (R$)', data: chartQuarterly.totals, backgroundColor: 'rgba(16,185,129,0.7)', borderRadius: 4 }] },
+                options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => 'R$' + (v/1000).toFixed(0)+'k', font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } } }
+            });
+        if (chartRouteSpend.labels.length)
+            new Chart(document.getElementById('chartRouteSpend'), {
+                type: 'bar',
+                data: { labels: chartRouteSpend.labels, datasets: [{ label: 'R$', data: chartRouteSpend.data, backgroundColor: 'rgba(99,102,241,0.7)', borderRadius: 4 }] },
+                options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { callback: v => 'R$' + (v/1000).toFixed(0)+'k', font: { size: 10 } } }, y: { ticks: { font: { size: 9 } } } } }
+            });
+    } else if (name === 'sla') {
+        new Chart(document.getElementById('chartSlaClient'), {
+            type: 'doughnut',
+            data: { labels: ['No Prazo','Atrasados','Outros'], datasets: [{ data: [onTimeCount, lateCount, Math.max(0, deliveredCount - onTimeCount - lateCount)], backgroundColor: ['#10b981','#ef4444','#e5e7eb'], borderWidth: 0 }] },
+            options: { responsive: false, cutout: '68%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 8, font: { size: 10 } } } } }
+        });
+    }
+}
+
+// Render first tab on load
+document.addEventListener('DOMContentLoaded', () => {
+    cTabRendered['operacional'] = true;
+    renderClientTab('operacional');
+});
+</script>
+{% endblock %}

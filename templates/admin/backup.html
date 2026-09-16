@@ -1,0 +1,222 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}Backup do Banco - EMALOG{% endblock %}
+{% block page_title %}Backup & Segurança dos Dados{% endblock %}
+{% block page_description %}Gerencie backups automáticos do banco de dados{% endblock %}
+
+{% block header_actions %}
+<div class="flex gap-2 flex-wrap">
+    <a href="{{ url_for('admin.index') }}"
+       class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm font-medium">
+        <i class="fas fa-arrow-left mr-2"></i>Painel Admin
+    </a>
+    <form method="POST" action="{{ url_for('admin.backup_create') }}" style="display:inline">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <button type="submit"
+                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm font-medium">
+            <i class="fas fa-download mr-2"></i>Criar Backup Agora
+        </button>
+    </form>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Status Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-database text-blue-600"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 font-medium">Tamanho do Banco</p>
+                    <p class="text-xl font-bold text-gray-800">{{ stats.db_size_kb }} KB</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-save text-green-600"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 font-medium">Backups Disponíveis</p>
+                    <p class="text-xl font-bold text-gray-800">{{ stats.total_backups }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 {% if not stats.latest %}border-orange-200 bg-orange-50{% endif %}">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 {% if stats.latest %}bg-purple-100{% else %}bg-orange-100{% endif %} rounded-full flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-clock {% if stats.latest %}text-purple-600{% else %}text-orange-600{% endif %}"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 font-medium">Último Backup</p>
+                    <p class="text-sm font-bold {% if stats.latest %}text-gray-800{% else %}text-orange-600{% endif %}">
+                        {% if stats.latest %}{{ stats.latest.created_at }}{% else %}Nenhum ainda{% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 {% if stats.sqlite_available %}bg-green-100{% else %}bg-red-100{% endif %} rounded-full flex items-center justify-center flex-shrink-0">
+                    <i class="fas {% if stats.sqlite_available %}fa-check-circle text-green-600{% else %}fa-times-circle text-red-600{% endif %}"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 font-medium">Banco Ativo</p>
+                    <p class="text-sm font-bold {% if stats.sqlite_available %}text-green-700{% else %}text-red-700{% endif %}">
+                        {% if stats.sqlite_available %}SQLite Operacional{% else %}Indisponível{% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Box -->
+    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+        <div class="flex gap-3">
+            <i class="fas fa-info-circle text-blue-500 text-lg mt-0.5 flex-shrink-0"></i>
+            <div class="text-sm text-blue-800">
+                <p class="font-semibold mb-1">Como funciona o sistema de backup</p>
+                <ul class="space-y-1 list-disc list-inside text-blue-700">
+                    <li><strong>Backup automático diário</strong> às 02h00 UTC — criado automaticamente</li>
+                    <li>Cada backup gera dois arquivos: <code class="bg-blue-100 px-1 rounded">.json</code> (dados legíveis) e <code class="bg-blue-100 px-1 rounded">.db</code> (cópia fiel do banco)</li>
+                    <li>Os últimos <strong>30 backups</strong> são mantidos automaticamente — os mais antigos são removidos</li>
+                    <li>Senhas são mascaradas no arquivo JSON por segurança</li>
+                    <li>Faça download regular do arquivo <code class="bg-blue-100 px-1 rounded">.db</code> para armazenar fora do servidor</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    {% if not stats.latest %}
+    <!-- Alerta: nenhum backup ainda -->
+    <div class="bg-orange-50 border border-orange-200 rounded-xl p-5 flex items-center gap-4">
+        <i class="fas fa-exclamation-triangle text-orange-500 text-2xl flex-shrink-0"></i>
+        <div>
+            <p class="font-semibold text-orange-800">Nenhum backup encontrado!</p>
+            <p class="text-sm text-orange-700 mt-1">Recomendamos criar um backup agora antes de continuar usando o sistema.</p>
+        </div>
+        <form method="POST" action="{{ url_for('admin.backup_create') }}" class="ml-auto flex-shrink-0">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm font-medium">
+                Criar agora
+            </button>
+        </form>
+    </div>
+    {% endif %}
+
+    <!-- Lista de Backups -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">
+                <i class="fas fa-archive mr-2 text-gray-400"></i>Backups Disponíveis
+            </h3>
+            <span class="text-xs text-gray-400">Máx. 30 backups mantidos automaticamente</span>
+        </div>
+
+        {% if backups %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-100">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Arquivo</th>
+                        <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase hidden sm:table-cell">Criado em</th>
+                        <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase hidden md:table-cell">Tamanho</th>
+                        <th class="px-5 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Ações</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-50">
+                    {% for backup in backups %}
+                    <tr class="hover:bg-gray-50 transition {% if loop.first %}bg-green-50{% endif %}">
+                        <td class="px-5 py-3">
+                            <div class="flex items-center gap-2">
+                                <i class="fas fa-file-alt text-blue-400 flex-shrink-0"></i>
+                                <span class="text-sm font-medium text-gray-800 font-mono">{{ backup.filename }}</span>
+                                {% if loop.first %}
+                                <span class="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium">Mais recente</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td class="px-5 py-3 hidden sm:table-cell">
+                            <span class="text-sm text-gray-600">{{ backup.created_at }}</span>
+                        </td>
+                        <td class="px-5 py-3 hidden md:table-cell">
+                            <span class="text-sm text-gray-600">{{ backup.size_kb }} KB</span>
+                        </td>
+                        <td class="px-5 py-3">
+                            <div class="flex items-center justify-center gap-2 flex-wrap">
+                                <!-- Download JSON -->
+                                <a href="{{ url_for('admin.backup_download', filename=backup.filename) }}"
+                                   class="inline-flex items-center px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg text-xs font-medium hover:bg-blue-100 transition"
+                                   title="Baixar JSON (dados legíveis)">
+                                    <i class="fas fa-file-code mr-1.5"></i>JSON
+                                </a>
+                                <!-- Download DB -->
+                                {% if backup.db_filename %}
+                                <a href="{{ url_for('admin.backup_download', filename=backup.db_filename) }}"
+                                   class="inline-flex items-center px-3 py-1.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg text-xs font-medium hover:bg-purple-100 transition"
+                                   title="Baixar banco SQLite (cópia fiel)">
+                                    <i class="fas fa-database mr-1.5"></i>SQLite
+                                </a>
+                                {% endif %}
+                                <!-- Deletar -->
+                                <form method="POST" action="{{ url_for('admin.backup_delete', filename=backup.filename) }}"
+                                      onsubmit="return confirm('Remover este backup?')">
+                                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit"
+                                            class="inline-flex items-center px-3 py-1.5 bg-red-50 border border-red-200 text-red-600 rounded-lg text-xs font-medium hover:bg-red-100 transition">
+                                        <i class="fas fa-trash mr-1.5"></i>Remover
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-12 text-gray-400">
+            <i class="fas fa-archive text-4xl mb-3 block"></i>
+            <p class="text-sm font-medium">Nenhum backup criado ainda</p>
+            <p class="text-xs mt-1">Clique em "Criar Backup Agora" para proteger seus dados</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Recomendações de Segurança -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+        <h3 class="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-4">
+            <i class="fas fa-shield-alt mr-2 text-gray-400"></i>Recomendações de Segurança
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="p-4 bg-green-50 rounded-lg border border-green-100">
+                <div class="flex items-center gap-2 mb-2">
+                    <i class="fas fa-check-circle text-green-500"></i>
+                    <span class="text-sm font-semibold text-green-800">Backup diário ativo</span>
+                </div>
+                <p class="text-xs text-green-700">O sistema cria backups automaticamente às 02h00 UTC todos os dias.</p>
+            </div>
+            <div class="p-4 bg-yellow-50 rounded-lg border border-yellow-100">
+                <div class="flex items-center gap-2 mb-2">
+                    <i class="fas fa-exclamation-triangle text-yellow-500"></i>
+                    <span class="text-sm font-semibold text-yellow-800">Copie para fora do servidor</span>
+                </div>
+                <p class="text-xs text-yellow-700">Baixe o arquivo <strong>.db</strong> regularmente e guarde em Google Drive, HD externo ou email.</p>
+            </div>
+            <div class="p-4 bg-blue-50 rounded-lg border border-blue-100">
+                <div class="flex items-center gap-2 mb-2">
+                    <i class="fas fa-info-circle text-blue-500"></i>
+                    <span class="text-sm font-semibold text-blue-800">Banco de dados</span>
+                </div>
+                <p class="text-xs text-blue-700">Dados em <strong>SQLite local</strong>. Para maior segurança, configure o PostgreSQL externo quando disponível.</p>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

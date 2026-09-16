@@ -1,0 +1,196 @@
+
+{% extends "dashboard_client_base.html" %}
+
+{% block title %}Meus Usuários - EMALOG{% endblock %}
+{% block page_title %}Gerenciar Usuários{% endblock %}
+{% block page_description %}Gerencie os usuários da sua empresa (máximo 5 usuários){% endblock %}
+
+{% block header_actions %}
+<div class="flex space-x-3">
+    {% if users|length < 5 %}
+    <a href="{{ url_for('client_users.new') }}" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+        <i class="fas fa-user-plus mr-2"></i>Novo Usuário
+    </a>
+    {% endif %}
+    <a href="{{ url_for('dashboard.client_dashboard') }}" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition">
+        <i class="fas fa-arrow-left mr-2"></i>Voltar ao Dashboard
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Info Box -->
+<div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
+    <div class="flex">
+        <div class="flex-shrink-0">
+            <i class="fas fa-info-circle text-blue-400"></i>
+        </div>
+        <div class="ml-3">
+            <p class="text-sm text-blue-700">
+                <strong>Usuários: {{ users|length }}/5</strong> - Você pode criar até 5 usuários para sua empresa. 
+                Todos os usuários terão acesso às mesmas funcionalidades de cliente.
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- Users Table -->
+<div class="bg-white rounded-lg shadow">
+    <div class="px-6 py-4 border-b border-gray-200">
+        <h3 class="text-lg font-medium text-gray-900">
+            Usuários da Empresa ({{ users|length }})
+        </h3>
+    </div>
+    
+    {% if users %}
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usuário</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Último Login</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Criado em</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+                {% for user in users %}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 h-10 w-10">
+                                <div class="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                                    <i class="fas fa-user text-blue-600 text-sm"></i>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <div class="text-sm font-medium text-gray-900">
+                                    {{ user.username }}
+                                    {% if user.id == current_user.id %}
+                                    <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full ml-2">Você</span>
+                                    {% endif %}
+                                </div>
+                                <div class="text-sm text-gray-500">{{ user.email }}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                   {% if user.active %}bg-green-100 text-green-800
+                                   {% else %}bg-red-100 text-red-800{% endif %}">
+                            {{ "Ativo" if user.active else "Inativo" }}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {% if user.last_login %}
+                            {{ user.last_login.strftime('%d/%m/%Y %H:%M') }}
+                        {% else %}
+                            Nunca
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {{ user.created_at.strftime('%d/%m/%Y') }}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div class="flex space-x-2 justify-end">
+                            <a href="{{ url_for('client_users.edit', id=user.id) }}" 
+                               class="text-blue-600 hover:text-blue-800" title="Editar usuário">
+                                <i class="fas fa-edit"></i>
+                            </a>
+                            <button onclick="resetPassword({{ user.id }}, '{{ user.username }}')" 
+                                    class="text-orange-600 hover:text-orange-800" 
+                                    title="Resetar senha">
+                                <i class="fas fa-key"></i>
+                            </button>
+                            {% if user.id != current_user.id %}
+                            <button onclick="toggleStatus({{ user.id }}, '{{ user.username }}', {{ user.active|tojson }})" 
+                                    class="text-{% if user.active %}red{% else %}green{% endif %}-600 hover:text-{% if user.active %}red{% else %}green{% endif %}-800" 
+                                    title="{% if user.active %}Desativar{% else %}Ativar{% endif %} usuário">
+                                <i class="fas fa-{% if user.active %}ban{% else %}check-circle{% endif %}"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="px-6 py-8 text-center">
+        <i class="fas fa-users text-gray-400 text-3xl mb-3"></i>
+        <p class="text-gray-500 mb-4">Nenhum usuário encontrado</p>
+        <a href="{{ url_for('client_users.new') }}" class="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+            <i class="fas fa-user-plus mr-2"></i>Criar Primeiro Usuário
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function toggleStatus(userId, username, isActive) {
+    const action = isActive ? 'desativar' : 'ativar';
+    if (confirm(`Tem certeza que deseja ${action} o usuário ${username}?`)) {
+        fetch(`/client/users/${userId}/toggle-status`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification(data.message, 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showNotification(data.message, 'error');
+            }
+        })
+        .catch(error => {
+            showNotification('Erro ao alterar status', 'error');
+        });
+    }
+}
+
+function resetPassword(userId, username) {
+    if (confirm(`Tem certeza que deseja resetar a senha do usuário ${username}? A nova senha será gerada automaticamente.`)) {
+        fetch(`/client/users/${userId}/reset-password`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(`Senha resetada com sucesso!\n\nNova senha: ${data.password}\n\nO usuário deve alterar esta senha no próximo login.`);
+                showNotification(data.message, 'success');
+            } else {
+                showNotification(data.message, 'error');
+            }
+        })
+        .catch(error => {
+            showNotification('Erro ao resetar senha', 'error');
+        });
+    }
+}
+
+function showNotification(message, type) {
+    // Simple notification (you can enhance this)
+    const alertClass = type === 'success' ? 'alert-success' : 'alert-danger';
+    const notification = document.createElement('div');
+    notification.className = `alert ${alertClass} alert-dismissible fade show position-fixed`;
+    notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999;';
+    notification.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.remove();
+    }, 5000);
+}
+</script>
+{% endblock %}

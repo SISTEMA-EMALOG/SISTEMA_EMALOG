@@ -1,0 +1,383 @@
+{% extends "dashboard_base.html" %}
+{% block title %}CRM Vendas - EMALOG{% endblock %}
+{% block page_title %}CRM — Central de Vendas{% endblock %}
+{% block page_description %}Pipeline de prospecção e controle de oportunidades{% endblock %}
+
+{% block header_actions %}
+<div class="flex items-center space-x-3">
+    <a href="{{ url_for('crm.guide') }}"
+       class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm font-medium">
+        <i class="fas fa-question-circle mr-2"></i>Como funciona
+    </a>
+    <a href="{{ url_for('crm.batches_index') }}"
+       class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm font-medium">
+        <i class="fas fa-layer-group mr-2"></i>Lotes
+    </a>
+    <a href="{{ url_for('crm.pipeline') }}"
+       class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm font-medium">
+        <i class="fas fa-columns mr-2"></i>Pipeline
+    </a>
+    <a href="{{ url_for('crm.activities_index') }}"
+       class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm font-medium relative">
+        <i class="fas fa-tasks mr-2"></i>Atividades
+        {% if overdue_activities > 0 %}
+        <span class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">!</span>
+        {% endif %}
+    </a>
+    <a href="{{ url_for('crm.leads_new') }}"
+       class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+        <i class="fas fa-plus mr-2"></i>Novo Lead
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+
+{# ── KPI Cards ────────────────────────────────────────────────────────────── #}
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+        <div class="flex items-center justify-between mb-3">
+            <div class="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                <i class="fas fa-users text-blue-600"></i>
+            </div>
+            <span class="text-xs text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded-full">+{{ new_leads_30d }} este mês</span>
+        </div>
+        <p class="text-2xl font-bold text-gray-900">{{ total_leads }}</p>
+        <p class="text-xs text-gray-500 mt-0.5">Total de Leads</p>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+        <div class="flex items-center justify-between mb-3">
+            <div class="w-10 h-10 bg-violet-100 rounded-xl flex items-center justify-center">
+                <i class="fas fa-funnel-dollar text-violet-600"></i>
+            </div>
+            <span class="text-xs text-violet-600 font-semibold bg-violet-50 px-2 py-0.5 rounded-full">{{ open_opps }} abertas</span>
+        </div>
+        <p class="text-2xl font-bold text-gray-900">R$ {{ '{:,.0f}'.format(pipeline_value).replace(',', '.') }}</p>
+        <p class="text-xs text-gray-500 mt-0.5">Valor em Pipeline</p>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+        <div class="flex items-center justify-between mb-3">
+            <div class="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
+                <i class="fas fa-trophy text-green-600"></i>
+            </div>
+            <span class="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded-full">{{ won_opps_count }} ganhas</span>
+        </div>
+        <p class="text-2xl font-bold text-gray-900">R$ {{ '{:,.0f}'.format(won_value).replace(',', '.') }}</p>
+        <p class="text-xs text-gray-500 mt-0.5">Receita Este Mês</p>
+    </div>
+
+    <a href="{{ url_for('crm.activities_index') }}"
+       class="bg-white rounded-xl shadow-sm border {% if overdue_activities > 0 %}border-red-200{% else %}border-gray-100{% endif %} p-5 hover:shadow-md transition block">
+        <div class="flex items-center justify-between mb-3">
+            <div class="w-10 h-10 {% if overdue_activities > 0 %}bg-red-100{% else %}bg-amber-100{% endif %} rounded-xl flex items-center justify-center">
+                <i class="fas fa-bell {% if overdue_activities > 0 %}text-red-600{% else %}text-amber-600{% endif %}"></i>
+            </div>
+            {% if overdue_activities > 0 %}
+            <span class="text-xs text-red-600 font-semibold bg-red-50 px-2 py-0.5 rounded-full">{{ overdue_activities }} atrasada(s)</span>
+            {% endif %}
+        </div>
+        <p class="text-2xl font-bold text-gray-900">{{ pending_activities }}</p>
+        <p class="text-xs text-gray-500 mt-0.5">Atividades Pendentes <span class="text-blue-500">→</span></p>
+    </a>
+</div>
+
+{# Alerta: Cotações enviadas aguardando aprovação do cliente #}
+{% set cotadas_count = pipeline_by_stage | selectattr('slug', 'equalto', 'proposta') | map(attribute='count') | first | default(0) %}
+{% if cotadas_count > 0 %}
+<div class="mb-4 flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+    <i class="fas fa-clock text-blue-500 mt-0.5"></i>
+    <div class="flex-1 text-sm">
+        <p class="font-semibold text-blue-800">{{ cotadas_count }} oportunidade(s) em estágio Proposta</p>
+        <p class="text-blue-600 text-xs mt-0.5">Propostas enviadas aos clientes aguardando aprovação, contraproposta ou rejeição.</p>
+    </div>
+    <a href="{{ url_for('quotes.index') }}?status=cotada"
+       class="text-xs text-blue-600 hover:underline whitespace-nowrap mt-0.5 font-medium">Ver Cotações →</a>
+</div>
+{% endif %}
+
+{# Conversão + Pipeline #}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+
+    {# Funil por estágio #}
+    <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-gray-700">Funil de Vendas</h3>
+            <a href="{{ url_for('crm.pipeline') }}" class="text-xs text-blue-600 hover:underline">Ver Kanban →</a>
+        </div>
+        <div class="space-y-3">
+            {% for s in pipeline_by_stage %}
+            {% set max_val = pipeline_by_stage | map(attribute='count') | max %}
+            {% set bar_w = ((s.count / max_val * 100) | int) if max_val > 0 else 0 %}
+            {% set colors = {'gray':'bg-gray-400','blue':'bg-blue-500','indigo':'bg-indigo-500','purple':'bg-purple-500','amber':'bg-amber-500','green':'bg-green-500','red':'bg-red-500'} %}
+            <div class="flex items-center gap-3">
+                <div class="w-24 text-xs text-gray-600 font-medium text-right">{{ s.name }}</div>
+                <div class="flex-1 bg-gray-100 rounded-full h-6 relative overflow-hidden">
+                    <div class="{{ colors.get(s.color, 'bg-blue-500') }} h-full rounded-full transition-all"
+                         style="width: {{ bar_w }}%"></div>
+                    {% if s.count > 0 %}
+                    <span class="absolute inset-0 flex items-center px-3 text-xs font-semibold text-gray-700">
+                        {{ s.count }} oport. — R$ {{ '{:,.0f}'.format(s.value).replace(',', '.') }}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between text-sm">
+            <span class="text-gray-500">Taxa de conversão (30d)</span>
+            <span class="font-bold {% if conversion_rate >= 30 %}text-green-600{% elif conversion_rate >= 15 %}text-amber-600{% else %}text-red-600{% endif %}">
+                {{ conversion_rate }}%
+            </span>
+        </div>
+    </div>
+
+    {# Atividades de hoje #}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+        <h3 class="text-sm font-semibold text-gray-700 mb-4">
+            Atividades de Hoje
+            {% if today_activities %}
+            <span class="ml-2 w-5 h-5 bg-blue-600 text-white text-xs rounded-full inline-flex items-center justify-center">
+                {{ today_activities|length }}
+            </span>
+            {% endif %}
+        </h3>
+        {% if today_activities %}
+        <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+            {% for act in today_activities %}
+            {% set at = AT_DICT.get(act.activity_type, ('nota','Nota','fa-sticky-note','gray')) %}
+            <div class="flex items-start gap-3 p-2.5 rounded-lg bg-gray-50 border border-gray-100 group hover:bg-white hover:border-blue-100 transition">
+                <div class="flex-shrink-0 w-7 h-7 rounded-md bg-{{ at[3] }}-100 flex items-center justify-center">
+                    <i class="fas {{ at[2] }} text-{{ at[3] }}-600 text-xs"></i>
+                </div>
+                <a href="{{ url_for('crm.leads_show', id=act.lead_id) if act.lead_id else '#' }}"
+                   class="flex-1 min-w-0 block">
+                    <p class="text-xs font-semibold text-gray-900 truncate">{{ act.title }}</p>
+                    {% if act.lead %}
+                    <p class="text-xs text-gray-500 truncate">{{ act.lead.company_name }}</p>
+                    {% endif %}
+                    {% if act.scheduled_at %}
+                    <p class="text-xs text-blue-600 font-medium">{{ act.scheduled_at.strftime('%H:%M') }}</p>
+                    {% endif %}
+                </a>
+                <button onclick="markDone({{ act.id }}, this)"
+                        class="flex-shrink-0 w-6 h-6 rounded-full border-2 border-gray-300 hover:border-green-500 hover:bg-green-50 transition cursor-pointer flex items-center justify-center"
+                        title="Marcar como feita">
+                    <i class="fas fa-check text-green-500 text-xs opacity-0 group-hover:opacity-100 transition"></i>
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-8">
+            <i class="fas fa-check-circle text-green-300 text-3xl mb-2"></i>
+            <p class="text-sm text-gray-400">Sem atividades para hoje</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{# ── Alertas de lotes esgotando ───────────────────────────────────────────── #}
+{% if batches_alert %}
+<div class="mb-6 space-y-2">
+{% for ba in batches_alert %}
+<div class="flex items-center gap-3 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3">
+    <i class="fas fa-exclamation-triangle text-amber-500"></i>
+    <div class="flex-1 text-sm">
+        <p class="font-semibold text-amber-800">Lote "{{ ba.name }}" está {{ ba.pct }}% contactado</p>
+        <p class="text-amber-600 text-xs mt-0.5">Sua equipe está quase esgotando este lote — considere importar novos leads em breve.</p>
+    </div>
+    <a href="{{ url_for('crm.batches_index') }}"
+       class="text-xs text-amber-700 font-semibold hover:underline whitespace-nowrap">Ver Lotes →</a>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+{# ── Ranking de Vendedores ─────────────────────────────────────────────────── #}
+{% if seller_ranking %}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+    <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-gray-700">
+            <i class="fas fa-medal mr-2 text-amber-500"></i>Ranking de Vendedores
+        </h3>
+        <span class="text-xs text-gray-400">Desempenho comercial</span>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide w-8">#</th>
+                    <th class="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Vendedor</th>
+                    <th class="text-center px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Leads</th>
+                    <th class="text-center px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Contactados</th>
+                    <th class="text-center px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Taxa Contato</th>
+                    <th class="text-center px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Convertidos</th>
+                    <th class="text-center px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Ativ. (30d)</th>
+                    <th class="text-center px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Negócios/mês</th>
+                    <th class="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Receita/mês</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+                {% for r in seller_ranking %}
+                <tr class="hover:bg-gray-50 transition {% if loop.first %}bg-amber-50{% endif %}">
+                    <td class="px-4 py-3 text-center">
+                        {% if loop.index == 1 %}
+                        <i class="fas fa-medal text-amber-400 text-base"></i>
+                        {% elif loop.index == 2 %}
+                        <i class="fas fa-medal text-gray-400 text-base"></i>
+                        {% elif loop.index == 3 %}
+                        <i class="fas fa-medal text-amber-700 text-base"></i>
+                        {% else %}
+                        <span class="text-gray-400 text-xs font-bold">{{ loop.index }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-4 py-3">
+                        <div class="flex items-center gap-2">
+                            <div class="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                                <span class="text-xs font-bold text-blue-700">{{ r.seller.username[0].upper() }}</span>
+                            </div>
+                            <div>
+                                <p class="font-medium text-gray-900 text-sm">{{ r.seller.username }}</p>
+                                <p class="text-xs text-gray-400">{{ r.seller.role }}</p>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-3 py-3 text-center font-medium text-gray-700">{{ r.leads }}</td>
+                    <td class="px-3 py-3 text-center text-blue-700 font-medium">{{ r.contacted }}</td>
+                    <td class="px-3 py-3 text-center">
+                        <span class="inline-block px-2 py-0.5 rounded-full text-xs font-semibold
+                            {% if r.contact_rate >= 70 %}bg-green-100 text-green-700
+                            {% elif r.contact_rate >= 40 %}bg-blue-100 text-blue-700
+                            {% else %}bg-gray-100 text-gray-600{% endif %}">
+                            {{ r.contact_rate }}%
+                        </span>
+                    </td>
+                    <td class="px-3 py-3 text-center text-green-700 font-bold">{{ r.converted }}</td>
+                    <td class="px-3 py-3 text-center text-gray-600">{{ r.activities_30d }}</td>
+                    <td class="px-3 py-3 text-center">
+                        {% if r.opps_won_month > 0 %}
+                        <span class="inline-block px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
+                            {{ r.opps_won_month }} negócio(s)
+                        </span>
+                        {% else %}
+                        <span class="text-gray-300 text-xs">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-right font-semibold {% if r.won_val_month > 0 %}text-green-700{% else %}text-gray-300{% endif %}">
+                        {% if r.won_val_month > 0 %}
+                        R$ {{ '{:,.0f}'.format(r.won_val_month).replace(',', '.') }}
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{# Leads recentes + Próximas atividades #}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+    {# Leads recentes #}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-gray-700">Leads Recentes</h3>
+            <a href="{{ url_for('crm.leads_index') }}" class="text-xs text-blue-600 hover:underline">Ver todos →</a>
+        </div>
+        {% if recent_leads %}
+        <div class="divide-y divide-gray-50">
+            {% for lead in recent_leads %}
+            {% set st = LEAD_STATUS_DICT.get(lead.status, ('novo','Novo','gray')) %}
+            {% set st_colors = {'gray':'bg-gray-100 text-gray-700','blue':'bg-blue-100 text-blue-700','green':'bg-green-100 text-green-700','purple':'bg-purple-100 text-purple-700','teal':'bg-teal-100 text-teal-700','red':'bg-red-100 text-red-700'} %}
+            <a href="{{ url_for('crm.leads_show', id=lead.id) }}"
+               class="flex items-center px-5 py-3 hover:bg-gray-50 transition">
+                <div class="flex-shrink-0 w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                    <span class="text-xs font-bold text-blue-700">{{ lead.company_name[0].upper() }}</span>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-900 truncate">{{ lead.company_name }}</p>
+                    <p class="text-xs text-gray-500">{{ lead.contact_name or lead.city or '—' }}</p>
+                </div>
+                <span class="text-xs px-2 py-0.5 rounded-full font-medium {{ st_colors.get(st[2], 'bg-gray-100 text-gray-700') }}">
+                    {{ st[1] }}
+                </span>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="p-8 text-center text-gray-400">
+            <i class="fas fa-user-plus text-3xl mb-2 text-gray-200"></i>
+            <p class="text-sm">Nenhum lead cadastrado ainda</p>
+            <a href="{{ url_for('crm.leads_new') }}" class="mt-3 inline-block text-sm text-blue-600 hover:underline">Criar primeiro lead</a>
+        </div>
+        {% endif %}
+    </div>
+
+    {# Próximas atividades #}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-gray-700">Próximas Atividades (7 dias)</h3>
+            <span class="text-xs text-gray-400">{{ upcoming|length }} pendente(s)</span>
+        </div>
+        {% if upcoming %}
+        <div class="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+            {% for act in upcoming %}
+            {% set at = AT_DICT.get(act.activity_type, ('nota','Nota','fa-sticky-note','gray')) %}
+            {% set is_today = act.scheduled_at and act.scheduled_at.date() == today %}
+            {% set is_overdue = act.scheduled_at and act.scheduled_at.date() < today %}
+            <div class="flex items-center px-5 py-3 gap-3 {% if is_overdue %}bg-red-50{% endif %}">
+                <div class="flex-shrink-0 w-8 h-8 rounded-full bg-{{ at[3] }}-100 flex items-center justify-center">
+                    <i class="fas {{ at[2] }} text-{{ at[3] }}-600 text-xs"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-900 truncate">{{ act.title }}</p>
+                    {% if act.lead %}
+                    <p class="text-xs text-gray-500 truncate">{{ act.lead.company_name }}</p>
+                    {% endif %}
+                </div>
+                <div class="text-right flex-shrink-0">
+                    {% if act.scheduled_at %}
+                    <p class="text-xs {% if is_overdue %}text-red-600 font-semibold{% elif is_today %}text-blue-600 font-semibold{% else %}text-gray-500{% endif %}">
+                        {{ act.scheduled_at.strftime('%d/%m %H:%M') }}
+                    </p>
+                    {% endif %}
+                    <button onclick="markDone({{ act.id }}, this)" title="Concluir"
+                            class="mt-1 text-xs text-gray-400 hover:text-green-600 transition">
+                        <i class="fas fa-check-circle"></i>
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="p-8 text-center text-gray-400">
+            <i class="fas fa-calendar-check text-3xl mb-2 text-gray-200"></i>
+            <p class="text-sm">Nenhuma atividade agendada</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function markDone(activityId, btn) {
+    fetch(`/crm/activities/${activityId}/done`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.success) {
+                const card = btn.closest('[class*="flex items"]');
+                if (card) {
+                    card.style.opacity = '0';
+                    card.style.transition = 'opacity 0.3s';
+                    setTimeout(() => card.remove(), 300);
+                }
+            }
+        });
+}
+</script>
+{% endblock %}

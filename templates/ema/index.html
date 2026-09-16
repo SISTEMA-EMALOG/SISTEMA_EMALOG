@@ -1,0 +1,861 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Agente EMA — EMALOG{% endblock %}
+
+{% block content %}
+<div class="p-6 max-w-7xl mx-auto">
+
+  <!-- Header -->
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900 flex items-center gap-2">
+        <i class="fas fa-robot text-blue-600"></i> Agente EMA
+      </h1>
+      <p class="text-sm text-gray-500 mt-1">Coleta e enriquecimento de cadastros via WhatsApp com IA</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <!-- Auto-refresh indicator -->
+      <span id="refresh-indicator" class="text-xs text-gray-400 flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse"></span>
+        Atualiza em <span id="refresh-countdown">30</span>s
+      </span>
+      <!-- Evolution API Status Badge -->
+      <div id="evo-status-badge" class="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium
+        {% if evo_status.state == 'open' %}bg-green-50 border-green-200 text-green-700
+        {% elif not evo_status.configured %}bg-yellow-50 border-yellow-200 text-yellow-700
+        {% else %}bg-red-50 border-red-200 text-red-700{% endif %}">
+        <span class="w-2 h-2 rounded-full
+          {% if evo_status.state == 'open' %}bg-green-500
+          {% elif not evo_status.configured %}bg-yellow-500
+          {% else %}bg-red-500{% endif %}"></span>
+        {% if evo_status.state == 'open' %}
+          WhatsApp conectado
+        {% elif not evo_status.configured %}
+          Evolution API não configurada
+        {% else %}
+          WhatsApp desconectado ({{ evo_status.state }})
+        {% endif %}
+      </div>
+      {% if evo_status.configured and evo_status.state != 'open' %}
+      <a href="{{ url_for('ema.reconnect_page') }}"
+        class="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 animate-pulse">
+        <i class="fas fa-qrcode"></i> Escanear QR Code
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- WhatsApp DISCONNECTED banner — urgent alert with QR link -->
+  {% if evo_status.configured and evo_status.state != 'open' %}
+  <div class="bg-red-50 border border-red-300 rounded-xl p-4 mb-5 flex items-center justify-between gap-4">
+    <div class="flex items-start gap-3">
+      <i class="fas fa-exclamation-triangle text-red-500 text-lg mt-0.5 flex-shrink-0"></i>
+      <div>
+        <p class="font-semibold text-red-800">⚠️ WhatsApp desconectado — mensagens NÃO estão sendo entregues</p>
+        <p class="text-sm text-red-700 mt-0.5">
+          O celular corporativo precisa ser reconectado. Clique em "Escanear QR Code" e escaneie com o WhatsApp do celular <strong>emalogcelularcorporativo6</strong>.
+        </p>
+      </div>
+    </div>
+    <a href="{{ url_for('ema.reconnect_page') }}"
+      class="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 shadow">
+      <i class="fas fa-qrcode"></i> Escanear QR Code
+    </a>
+  </div>
+  {% endif %}
+
+  <!-- Config notice when not configured -->
+  {% if not evo_status.configured %}
+  <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-5">
+    <h3 class="font-semibold text-yellow-800 flex items-center gap-2">
+      <i class="fas fa-triangle-exclamation"></i> Evolution API não configurada
+    </h3>
+    <p class="text-sm text-yellow-700 mt-1">
+      Configure as variáveis <code class="bg-yellow-100 px-1 rounded">EVOLUTION_API_URL</code>,
+      <code class="bg-yellow-100 px-1 rounded">EVOLUTION_API_KEY</code> e
+      <code class="bg-yellow-100 px-1 rounded">EVOLUTION_INSTANCE</code> para enviar mensagens reais.
+    </p>
+    <p class="text-sm text-yellow-700 mt-1">
+      Webhook: <code class="bg-yellow-100 px-1 rounded">{{ request.host_url }}ema/webhook</code>
+      (evento: <code class="bg-yellow-100 px-1 rounded">messages.upsert</code>)
+    </p>
+    <p class="text-xs text-yellow-600 mt-1 italic">
+      ⚡ Modo simulado ativo — conversas são processadas mas não enviadas pelo WhatsApp.
+    </p>
+  </div>
+  {% else %}
+  <!-- Webhook URL reminder (always show when Evolution API is configured) -->
+  <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5">
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div class="flex-1 min-w-0">
+        <h3 class="font-semibold text-blue-800 flex items-center gap-2 text-sm">
+          <i class="fas fa-link"></i> Webhook — Evolution API
+        </h3>
+        <p class="text-xs text-blue-700 mt-1">
+          O Agente EMA precisa que o webhook esteja registrado na Evolution API para receber respostas dos motoristas.
+        </p>
+        <!-- URL + actions -->
+        <div class="flex flex-wrap items-center gap-2 mt-2">
+          <code id="webhook-url-text" class="bg-white border border-blue-200 px-2 py-1 rounded text-xs text-blue-900 font-mono select-all truncate max-w-xs">{{ request.host_url.rstrip('/') }}/ema/webhook</code>
+          <button onclick="copyWebhookUrl()" class="text-xs text-blue-600 hover:text-blue-800 border border-blue-300 px-2 py-1 rounded hover:bg-blue-100 transition flex items-center gap-1 shrink-0">
+            <i class="fas fa-copy"></i> Copiar
+          </button>
+          <a href="{{ url_for('ema.webhook_ping') }}" target="_blank"
+            class="text-xs text-blue-600 hover:text-blue-800 border border-blue-300 px-2 py-1 rounded hover:bg-blue-100 transition flex items-center gap-1 shrink-0">
+            <i class="fas fa-vial"></i> Testar
+          </a>
+        </div>
+        <!-- Auto-configure button -->
+        <div class="mt-3 flex items-center gap-3 flex-wrap">
+          <button id="btn-auto-webhook" onclick="autoConfigureWebhook()"
+            class="inline-flex items-center gap-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg transition shadow-sm">
+            <i class="fas fa-bolt"></i> Configurar Webhook Automaticamente
+          </button>
+          <button onclick="checkWebhookStatus()"
+            class="inline-flex items-center gap-2 text-xs text-blue-700 border border-blue-300 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition">
+            <i class="fas fa-search"></i> Ver configuração atual
+          </button>
+        </div>
+        <!-- Result area -->
+        <div id="webhook-result" class="hidden mt-3 text-xs rounded-lg p-3 font-mono whitespace-pre-wrap break-all"></div>
+      </div>
+      <div class="flex-shrink-0">
+        {% if evo_status.state == 'open' %}
+        <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-100 px-2 py-1 rounded-full">
+          <span class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span> WhatsApp OK
+        </span>
+        {% else %}
+        <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-red-700 bg-red-100 px-2 py-1 rounded-full">
+          <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span> {{ evo_status.state }}
+        </span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Abandoned sessions alert — cadastros incompletos por inatividade -->
+  {% if abandoned_sessions %}
+  <div class="bg-red-50 border border-red-300 rounded-xl p-4 mb-5">
+    <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div class="flex items-start gap-3 flex-1 min-w-0">
+        <i class="fas fa-clock text-red-500 text-lg mt-0.5 flex-shrink-0"></i>
+        <div>
+          <p class="font-semibold text-red-800 text-sm">
+            {{ abandoned_sessions|length }} cadastro{{ 's' if abandoned_sessions|length > 1 }} incompleto{{ 's' if abandoned_sessions|length > 1 }} — motorista{{ 's' if abandoned_sessions|length > 1 }} saíram sem finalizar
+          </p>
+          <p class="text-xs text-red-700 mt-1">
+            A conversa foi encerrada automaticamente por inatividade. Reinicie quando quiser para retomar o cadastro.
+          </p>
+          <div class="flex flex-wrap gap-2 mt-3">
+            {% for di in abandoned_sessions %}
+            {% set s = di.session %}
+            <div class="flex items-center gap-2 bg-white border border-red-200 rounded-xl px-3 py-2">
+              <div class="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                <i class="fas fa-truck text-red-500 text-xs"></i>
+              </div>
+              <div class="min-w-0">
+                <p class="font-semibold text-gray-900 text-xs truncate max-w-28">{{ di.driver.name.split()[0] }}</p>
+                <p class="text-xs text-red-600 font-medium">{{ di.pct }}% completo</p>
+              </div>
+              <div class="flex items-center gap-1 ml-1">
+                <a href="{{ url_for('ema.session_detail', sid=s.id) }}"
+                   class="px-2 py-1 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+                  <i class="fas fa-eye"></i>
+                </a>
+                <button onclick="restartSession({{ s.id }}, this)"
+                  class="px-2 py-1 text-xs text-white bg-red-500 hover:bg-red-600 border border-red-400 rounded-lg transition flex items-center gap-1"
+                  title="Reiniciar conversa">
+                  <i class="fas fa-rotate-right"></i> Reiniciar
+                </button>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      <button onclick="setTab('abandoned')"
+        class="flex-shrink-0 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 flex items-center gap-2">
+        <i class="fas fa-list"></i> Ver todos
+      </button>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Stat cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+    <div class="bg-white rounded-xl border border-gray-200 p-4 cursor-pointer hover:border-gray-300 transition-colors" onclick="setTab('all')">
+      <p class="text-xs text-gray-500 uppercase tracking-wide">Total</p>
+      <p class="text-3xl font-bold text-gray-900 mt-1">{{ total }}</p>
+      <p class="text-xs text-gray-400 mt-1">motoristas</p>
+    </div>
+    <div class="bg-blue-50 rounded-xl border border-blue-200 p-4 cursor-pointer hover:border-blue-300 transition-colors" onclick="setTab('active')">
+      <p class="text-xs text-blue-600 uppercase tracking-wide">Em conversa</p>
+      <p class="text-3xl font-bold text-blue-700 mt-1" id="stat-active">{{ in_prog }}</p>
+      <p class="text-xs text-blue-500 mt-1">sessões ativas</p>
+    </div>
+    <div class="{% if pending_validation > 0 %}bg-amber-50 border-amber-300{% else %}bg-white border-gray-200{% endif %} rounded-xl border p-4 cursor-pointer hover:border-amber-300 transition-colors" onclick="setTab('review')">
+      <p class="text-xs {% if pending_validation > 0 %}text-amber-600{% else %}text-gray-500{% endif %} uppercase tracking-wide">Aguard. revisão</p>
+      <p class="text-3xl font-bold {% if pending_validation > 0 %}text-amber-600{% else %}text-gray-400{% endif %} mt-1" id="stat-review">{{ pending_validation }}</p>
+      <p class="text-xs {% if pending_validation > 0 %}text-amber-500{% else %}text-gray-400{% endif %} mt-1">para validar</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4 cursor-pointer hover:border-gray-300 transition-colors" onclick="setTab('no-session')">
+      <p class="text-xs text-gray-500 uppercase tracking-wide">Sem sessão</p>
+      <p class="text-3xl font-bold text-gray-600 mt-1">{{ no_session }}</p>
+      <p class="text-xs text-gray-400 mt-1">nunca iniciado</p>
+    </div>
+    <div class="{% if abandoned_count > 0 %}bg-red-50 border-red-300{% else %}bg-white border-gray-200{% endif %} rounded-xl border p-4 cursor-pointer hover:border-red-300 transition-colors" onclick="setTab('abandoned')">
+      <p class="text-xs {% if abandoned_count > 0 %}text-red-600{% else %}text-gray-500{% endif %} uppercase tracking-wide">Incompletos</p>
+      <p class="text-3xl font-bold {% if abandoned_count > 0 %}text-red-600{% else %}text-gray-400{% endif %} mt-1">{{ abandoned_count }}</p>
+      <p class="text-xs {% if abandoned_count > 0 %}text-red-500{% else %}text-gray-400{% endif %} mt-1">saíram sem concluir</p>
+    </div>
+    <div class="bg-green-50 rounded-xl border border-green-200 p-4 cursor-pointer hover:border-green-300 transition-colors" onclick="setTab('complete')">
+      <p class="text-xs text-green-600 uppercase tracking-wide">Completos</p>
+      <p class="text-3xl font-bold text-green-700 mt-1">{{ complete }}</p>
+      <p class="text-xs text-green-500 mt-1">100% preenchido</p>
+    </div>
+  </div>
+
+  <!-- Active sessions panel (only when there are active sessions) -->
+  {% if active_sessions %}
+  <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5">
+    <h2 class="text-sm font-semibold text-blue-800 mb-3 flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+      {{ active_sessions|length }} conversa{{ 's' if active_sessions|length > 1 }} em andamento agora
+    </h2>
+    <div class="flex flex-wrap gap-2">
+      {% for di in active_sessions %}
+      {% set s = di.session %}
+      <a href="{{ url_for('ema.session_detail', sid=s.id) }}"
+         class="flex items-center gap-2 bg-white border rounded-xl px-3 py-2 hover:shadow-md transition-shadow text-sm
+                {% if s.status == 'awaiting_confirmation' %}border-amber-300
+                {% elif s.status == 'awaiting_file' %}border-indigo-300
+                {% else %}border-blue-200{% endif %}">
+        <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-truck text-blue-600 text-xs"></i>
+        </div>
+        <div class="min-w-0">
+          <p class="font-semibold text-gray-900 truncate max-w-32">{{ di.driver.name.split()[0] }}</p>
+          <p class="text-xs text-gray-500 truncate max-w-32">
+            {% if s.status == 'awaiting_file' %}
+              📎 Aguard. arquivo
+            {% elif s.status == 'awaiting_confirmation' %}
+              ⏳ Aguard. confirmação
+            {% elif di.current_field_label %}
+              📝 {{ di.current_field_label }}
+            {% else %}
+              💬 Em conversa
+            {% endif %}
+          </p>
+        </div>
+        <div class="ml-1 flex-shrink-0">
+          <div class="w-8 h-8 relative">
+            <svg class="w-8 h-8 -rotate-90" viewBox="0 0 32 32">
+              <circle cx="16" cy="16" r="12" fill="none" stroke="#e5e7eb" stroke-width="4"/>
+              <circle cx="16" cy="16" r="12" fill="none"
+                stroke="{% if di.pct == 100 %}#22c55e{% elif di.pct >= 60 %}#f59e0b{% else %}#3b82f6{% endif %}"
+                stroke-width="4"
+                stroke-dasharray="{{ (di.pct / 100 * 75.4)|round(1) }} 75.4"
+                stroke-linecap="round"/>
+            </svg>
+            <span class="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-700">{{ di.pct }}%</span>
+          </div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Pending-review alert -->
+  {% if pending_validation > 0 %}
+  <div class="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-5 flex items-start gap-3">
+    <i class="fas fa-clipboard-check text-purple-500 mt-0.5 text-lg flex-shrink-0"></i>
+    <div class="flex-1">
+      <p class="font-semibold text-purple-800">
+        {{ pending_validation }} cadastro{{ 's' if pending_validation > 1 }} aguardando sua revisão
+      </p>
+      <p class="text-sm text-purple-700 mt-0.5">
+        O robô finalizou a coleta e o motorista confirmou os dados. Revise e valide quando puder.
+      </p>
+    </div>
+    <button onclick="setTab('review')"
+      class="flex-shrink-0 px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg hover:bg-purple-700 flex items-center gap-2">
+      <i class="fas fa-list-check"></i> Ver pendentes
+    </button>
+  </div>
+  {% endif %}
+
+  <!-- Toolbar -->
+  <div class="flex flex-wrap items-center gap-3 mb-4">
+    <!-- Tab filters -->
+    <div class="flex bg-gray-100 rounded-lg p-1 gap-1" id="tab-bar">
+      <button onclick="setTab('all')"       class="tab-btn tab-all px-3 py-1.5 rounded-md text-xs font-semibold transition-colors bg-white text-gray-900 shadow-sm">Todos ({{ total }})</button>
+      <button onclick="setTab('active')"    class="tab-btn tab-active px-3 py-1.5 rounded-md text-xs font-semibold transition-colors text-gray-600 hover:text-gray-900">Em conversa ({{ in_prog }})</button>
+      <button onclick="setTab('abandoned')" class="tab-btn tab-abandoned px-3 py-1.5 rounded-md text-xs font-semibold transition-colors {% if abandoned_count > 0 %}text-red-600 hover:text-red-800{% else %}text-gray-600 hover:text-gray-900{% endif %}">Incompletos ({{ abandoned_count }})</button>
+      <button onclick="setTab('review')"    class="tab-btn tab-review px-3 py-1.5 rounded-md text-xs font-semibold transition-colors text-gray-600 hover:text-gray-900">Revisão ({{ pending_validation }})</button>
+      <button onclick="setTab('no-session')" class="tab-btn tab-no-session px-3 py-1.5 rounded-md text-xs font-semibold transition-colors text-gray-600 hover:text-gray-900">Sem sessão ({{ no_session }})</button>
+      <button onclick="setTab('complete')"  class="tab-btn tab-complete px-3 py-1.5 rounded-md text-xs font-semibold transition-colors text-gray-600 hover:text-gray-900">Completos ({{ complete }})</button>
+    </div>
+
+    <!-- Search -->
+    <div class="ml-auto flex items-center gap-2">
+      <input type="text" id="search-input" placeholder="Buscar motorista…" oninput="applyFilters()"
+             class="px-3 py-2 border border-gray-200 rounded-lg text-sm w-44 focus:outline-none focus:ring-2 focus:ring-blue-500">
+    </div>
+  </div>
+
+  <!-- Selection bar (hidden until something is selected) -->
+  <div id="selection-bar" class="hidden bg-blue-600 text-white rounded-xl px-4 py-3 mb-4 flex items-center justify-between">
+    <span class="text-sm font-semibold flex items-center gap-2">
+      <i class="fas fa-check-square"></i>
+      <span id="selection-count">0</span> motorista(s) selecionado(s)
+    </span>
+    <div class="flex items-center gap-2">
+      <button onclick="clearSelection()" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-400 rounded-lg text-xs font-semibold">
+        <i class="fas fa-times mr-1"></i>Limpar
+      </button>
+      <button onclick="startSelected()" id="btn-start"
+        class="px-4 py-1.5 bg-white text-blue-700 hover:bg-blue-50 rounded-lg text-xs font-semibold flex items-center gap-1">
+        <i class="fas fa-play"></i> Iniciar EMA para selecionados
+      </button>
+    </div>
+  </div>
+
+  <!-- Drivers table -->
+  <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="chk-all" onchange="toggleAll(this)"
+                 class="rounded border-gray-300 text-blue-600">
+          <span class="text-xs text-gray-500 font-medium">Selecionar visíveis</span>
+        </label>
+      </div>
+      <span class="text-xs text-gray-400" id="visible-count"></span>
+    </div>
+    <table class="w-full text-sm" id="drivers-table">
+      <thead class="bg-gray-50 border-b border-gray-200">
+        <tr>
+          <th class="px-4 py-3 w-8"></th>
+          <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Motorista</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase hidden sm:table-cell">Telefone</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Progresso</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase hidden md:table-cell">Sessão / Campo atual</th>
+          <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase hidden lg:table-cell">Último contato</th>
+          <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Ações</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100" id="drivers-tbody">
+        {% for di in driver_info %}
+        {% set d = di.driver %}
+        {% set s = di.session %}
+        {% set is_active = s and s.status in ['active','awaiting_file','awaiting_confirmation'] %}
+        {% set is_abandoned = s and s.status == 'abandoned' %}
+        <tr class="hover:bg-gray-50 driver-row
+            {% if is_active %}bg-blue-50/30{% elif is_abandoned %}bg-red-50/40{% elif s and s.status == 'completed' %}bg-purple-50/30{% elif s and s.status == 'awaiting_confirmation' %}bg-amber-50/30{% endif %}"
+          data-name="{{ d.name|lower }}"
+          data-status="{% if is_active %}active{% elif is_abandoned %}abandoned{% elif s and s.status == 'completed' %}review{% elif s and s.status == 'validated' %}validated{% elif not s %}no-session{% elif di.pct == 100 %}complete{% else %}incomplete{% endif %}"
+          data-pct="{{ di.pct }}">
+
+          <!-- Checkbox -->
+          <td class="px-4 py-3">
+            {% if not is_active %}
+            <input type="checkbox" class="driver-chk rounded border-gray-300 text-blue-600"
+                   value="{{ d.id }}" onchange="updateSelectionBar()">
+            {% else %}
+            <span class="text-blue-400 text-xs" title="Em conversa"><i class="fas fa-comment-dots"></i></span>
+            {% endif %}
+          </td>
+
+          <!-- Driver name + vehicle -->
+          <td class="px-4 py-3">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0
+                {% if is_active %}bg-blue-100{% elif di.pct == 100 %}bg-green-100{% else %}bg-gray-100{% endif %}">
+                <i class="fas fa-truck text-xs
+                  {% if is_active %}text-blue-600{% elif di.pct == 100 %}text-green-600{% else %}text-gray-500{% endif %}"></i>
+              </div>
+              <div>
+                <div class="font-semibold text-gray-900">{{ d.name }}</div>
+                <div class="text-xs text-gray-400">
+                  {{ d.truck_type or '—' }}{% if d.vehicle_plate %} · {{ d.vehicle_plate }}{% endif %}
+                </div>
+                <!-- Missing field chips (mobile-only, show up to 2) -->
+                {% if di.missing_labels %}
+                <div class="flex flex-wrap gap-1 mt-1 md:hidden">
+                  {% for lbl in di.missing_labels[:2] %}
+                  <span class="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-medium">{{ lbl }}</span>
+                  {% endfor %}
+                  {% if di.missing > 2 %}<span class="text-xs text-gray-400">+{{ di.missing - 2 }}</span>{% endif %}
+                </div>
+                {% endif %}
+              </div>
+            </div>
+          </td>
+
+          <!-- Phone -->
+          <td class="px-4 py-3 text-gray-600 text-xs hidden sm:table-cell">{{ d.phone }}</td>
+
+          <!-- Progress -->
+          <td class="px-4 py-3">
+            <div class="flex items-center gap-2">
+              <div class="flex-1 bg-gray-200 rounded-full h-2 w-20 min-w-16">
+                <div class="h-2 rounded-full transition-all
+                  {% if di.pct == 100 %}bg-green-500
+                  {% elif di.pct >= 60 %}bg-yellow-400
+                  {% else %}bg-red-400{% endif %}"
+                  style="width: {{ di.pct }}%"></div>
+              </div>
+              <span class="text-xs font-bold w-9 text-right
+                {% if di.pct == 100 %}text-green-600
+                {% elif di.pct >= 60 %}text-yellow-600
+                {% else %}text-red-500{% endif %}">{{ di.pct }}%</span>
+            </div>
+            {% if di.missing_labels %}
+            <div class="flex flex-wrap gap-1 mt-1.5 hidden md:flex">
+              {% for lbl in di.missing_labels %}
+              <span class="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-medium truncate max-w-28" title="{{ lbl }}">{{ lbl }}</span>
+              {% endfor %}
+              {% if di.missing > di.missing_labels|length %}
+              <span class="text-xs text-gray-400">+{{ di.missing - di.missing_labels|length }} mais</span>
+              {% endif %}
+            </div>
+            {% elif di.pct == 100 %}
+            <div class="text-xs text-green-600 mt-1 font-medium"><i class="fas fa-check-circle mr-0.5"></i>Completo</div>
+            {% endif %}
+          </td>
+
+          <!-- Session / current field -->
+          <td class="px-4 py-3 hidden md:table-cell">
+            {% if s %}
+              <div class="flex flex-col gap-1">
+                {% if s.status == 'active' %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 w-fit">
+                  <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span> Em conversa
+                </span>
+                {% elif s.status == 'awaiting_file' %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700 w-fit">
+                  <span class="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span> Aguard. arquivo
+                </span>
+                {% elif s.status == 'awaiting_confirmation' %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 w-fit">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span> Aguard. confirmação
+                </span>
+                {% elif s.status == 'completed' %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700 w-fit">
+                  <i class="fas fa-clipboard-check text-xs"></i> Aguard. revisão
+                </span>
+                {% elif s.status == 'validated' %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 w-fit">
+                  <i class="fas fa-shield-check text-xs"></i> Validado
+                </span>
+                {% elif s.status == 'error' %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 w-fit">
+                  <i class="fas fa-exclamation text-xs"></i> Erro
+                </span>
+                {% else %}
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 w-fit">
+                  {{ s.status }}
+                </span>
+                {% endif %}
+                {% if di.current_field_label and is_active %}
+                <span class="text-xs text-gray-500 flex items-center gap-1">
+                  <i class="fas fa-pen-to-square text-gray-400 text-xs"></i>
+                  {{ di.current_field_label }}
+                </span>
+                {% endif %}
+              </div>
+            {% else %}
+              <span class="text-xs text-gray-400 italic">Nunca iniciado</span>
+            {% endif %}
+          </td>
+
+          <!-- Last activity -->
+          <td class="px-4 py-3 hidden lg:table-cell">
+            {% if di.last_activity %}
+            <span class="text-xs text-gray-500">{{ di.last_activity.strftime('%d/%m %H:%M') }}</span>
+            {% else %}
+            <span class="text-xs text-gray-300">—</span>
+            {% endif %}
+          </td>
+
+          <!-- Actions -->
+          <td class="px-4 py-3 text-right">
+            <div class="flex items-center justify-end gap-1.5">
+              {% if s %}
+              <a href="{{ url_for('ema.session_detail', sid=s.id) }}"
+                 class="text-xs px-2.5 py-1.5 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium whitespace-nowrap">
+                <i class="fas fa-eye mr-1"></i>Ver
+              </a>
+              {% if s.status == 'completed' %}
+              <form method="POST" action="{{ url_for('ema.session_validate', sid=s.id) }}" class="inline"
+                    onsubmit="return confirm('Marcar cadastro de {{ d.name }} como revisado?')">
+                <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token', '') }}">
+                <button type="submit"
+                  class="text-xs px-2.5 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700 font-medium whitespace-nowrap">
+                  <i class="fas fa-check-double mr-1"></i>Revisar
+                </button>
+              </form>
+              {% endif %}
+              {% endif %}
+
+              {% if is_active %}
+              <button onclick="restartOne({{ d.id }}, '{{ d.name|replace("'","\\'")|e }}')"
+                title="Reiniciar sessão — a EMA vai mandar nova saudação e recomeçar do zero"
+                class="text-xs px-2.5 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600 font-medium whitespace-nowrap">
+                <i class="fas fa-rotate-right mr-1"></i>Reiniciar
+              </button>
+              {% else %}
+              <button onclick="startOne({{ d.id }})"
+                class="text-xs px-2.5 py-1.5 rounded-lg {% if di.pct < 100 %}bg-blue-600 text-white hover:bg-blue-700{% else %}bg-gray-200 text-gray-700 hover:bg-gray-300{% endif %} font-medium whitespace-nowrap">
+                {% if di.pct < 100 %}
+                <i class="fas fa-play mr-1"></i>Iniciar
+                {% else %}
+                <i class="fas fa-arrows-rotate mr-1"></i>Atualizar
+                {% endif %}
+              </button>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="px-4 py-16 text-center text-gray-400">
+            <i class="fas fa-truck text-5xl mb-4 block opacity-30"></i>
+            Nenhum motorista cadastrado ainda.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <!-- Empty state for filtered tabs -->
+    <div id="empty-state" class="hidden px-4 py-16 text-center text-gray-400">
+      <i class="fas fa-filter text-4xl mb-3 block opacity-30"></i>
+      <p class="text-sm">Nenhum motorista neste filtro.</p>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 hidden">
+    <div id="toast-inner" class="px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"></div>
+  </div>
+
+  <!-- SocketIO real-time notification -->
+  <div id="ema-notif" class="fixed top-6 right-6 z-50 hidden max-w-sm w-full">
+    <div class="bg-amber-500 text-white rounded-xl shadow-2xl p-4 flex items-start gap-3">
+      <i class="fas fa-bell text-2xl mt-0.5 flex-shrink-0"></i>
+      <div class="flex-1">
+        <p class="font-semibold text-sm" id="ema-notif-title">Cadastro aguardando validação</p>
+        <p class="text-xs mt-0.5 opacity-90" id="ema-notif-body"></p>
+        <a id="ema-notif-link" href="#" class="inline-block mt-2 text-xs bg-white text-amber-700 font-semibold px-3 py-1 rounded-lg hover:bg-amber-50">
+          Ver sessão →
+        </a>
+      </div>
+      <button onclick="document.getElementById('ema-notif').classList.add('hidden')" class="opacity-70 hover:opacity-100 ml-1">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let currentTab = 'all';
+
+// ── Tab navigation ─────────────────────────────────────────────────────────
+function setTab(tab) {
+  currentTab = tab;
+  // Update tab button styles
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.remove('bg-white', 'text-gray-900', 'shadow-sm');
+    btn.classList.add('text-gray-600');
+  });
+  const active = document.querySelector(`.tab-${tab}`);
+  if (active) {
+    active.classList.add('bg-white', 'text-gray-900', 'shadow-sm');
+    active.classList.remove('text-gray-600');
+  }
+  applyFilters();
+}
+
+// ── Filtering ──────────────────────────────────────────────────────────────
+function applyFilters() {
+  const search = document.getElementById('search-input').value.toLowerCase();
+  const rows   = document.querySelectorAll('.driver-row');
+  let visible  = 0;
+
+  rows.forEach(row => {
+    const name   = row.dataset.name || '';
+    const status = row.dataset.status || '';
+    const pct    = parseInt(row.dataset.pct || '0');
+
+    let show = true;
+
+    // Tab filter
+    switch (currentTab) {
+      case 'active':
+        show = status === 'active'; break;
+      case 'abandoned':
+        show = status === 'abandoned'; break;
+      case 'review':
+        show = status === 'review'; break;
+      case 'no-session':
+        show = status === 'no-session'; break;
+      case 'complete':
+        show = (status === 'complete' || status === 'validated' || pct === 100); break;
+      default: // 'all'
+        show = true;
+    }
+
+    // Search
+    if (show && search && !name.includes(search)) show = false;
+
+    row.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+
+  // Update visible count
+  const countEl = document.getElementById('visible-count');
+  if (countEl) countEl.textContent = `${visible} motorista${visible !== 1 ? 's' : ''}`;
+
+  // Empty state
+  const empty = document.getElementById('empty-state');
+  if (empty) empty.classList.toggle('hidden', visible > 0);
+
+  // Uncheck hidden rows
+  document.querySelectorAll('.driver-chk').forEach(chk => {
+    const row = chk.closest('.driver-row');
+    if (row && row.style.display === 'none') chk.checked = false;
+  });
+  updateSelectionBar();
+}
+
+// ── Selection ──────────────────────────────────────────────────────────────
+function toggleAll(cb) {
+  document.querySelectorAll('.driver-row').forEach(row => {
+    if (row.style.display === 'none') return;
+    const chk = row.querySelector('.driver-chk');
+    if (chk) chk.checked = cb.checked;
+  });
+  updateSelectionBar();
+}
+
+function updateSelectionBar() {
+  const selected = getSelected();
+  const bar = document.getElementById('selection-bar');
+  const count = document.getElementById('selection-count');
+  if (selected.length > 0) {
+    bar.classList.remove('hidden');
+    count.textContent = selected.length;
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+function clearSelection() {
+  document.querySelectorAll('.driver-chk').forEach(c => c.checked = false);
+  document.getElementById('chk-all').checked = false;
+  updateSelectionBar();
+}
+
+function getSelected() {
+  return [...document.querySelectorAll('.driver-chk:checked')].map(c => parseInt(c.value));
+}
+
+// ── Actions ────────────────────────────────────────────────────────────────
+function showToast(msg, type) {
+  const toast = document.getElementById('toast');
+  const inner = document.getElementById('toast-inner');
+  inner.className = `px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2 ${type === 'error' ? 'bg-red-600' : 'bg-green-600'}`;
+  inner.innerHTML = (type === 'error' ? '<i class="fas fa-exclamation-circle"></i>' : '<i class="fas fa-check-circle"></i>') + ' ' + msg;
+  toast.classList.remove('hidden');
+  setTimeout(() => toast.classList.add('hidden'), 4000);
+}
+
+async function startSelected() {
+  const ids = getSelected();
+  if (!ids.length) { showToast('Selecione pelo menos um motorista.', 'error'); return; }
+  await doStart(ids);
+}
+
+async function startOne(id) { await doStart([id]); }
+
+async function restartOne(id, name) {
+  if (!confirm(`Reiniciar sessão de ${name}?\n\nO histórico será apagado e a EMA enviará uma nova saudação ao motorista.`)) return;
+  await doStart([id]);
+}
+
+async function restartSession(sid, btn, force) {
+  if (!confirm('Reiniciar essa conversa?\n\nA EMA enviará uma nova mensagem ao motorista de onde parou.')) return;
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+  const csrf = document.querySelector('input[name="_csrf_token"]')?.value || '';
+  try {
+    const r = await fetch(`/ema/session/${sid}/restart`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+      body: JSON.stringify({force: !!force})
+    });
+    const d = await r.json();
+    if (d.cooldown) {
+      const mins = Math.floor(d.remaining_secs / 60);
+      const secs = d.remaining_secs % 60;
+      showToast(`⏱ Cooldown: aguarde ${mins}m${String(secs).padStart(2,'0')}s antes de reenviar`, 'error');
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fas fa-clock text-yellow-200"></i> ${mins}m${String(secs).padStart(2,'0')}s`;
+      // Allow force after seeing the warning
+      btn.onclick = () => { if(confirm('Forçar reenvio mesmo durante cooldown?')) restartSession(sid, btn, true); };
+    } else if (d.ok) {
+      showToast('✅ Conversa reiniciada! A EMA mandou mensagem para o motorista.', 'ok');
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      showToast('❌ Erro ao reiniciar. Verifique a conexão WhatsApp.', 'error');
+      btn.disabled = false; btn.innerHTML = orig;
+    }
+  } catch(e) {
+    showToast('Erro de conexão.', 'error');
+    btn.disabled = false; btn.innerHTML = orig;
+  }
+}
+
+async function doStart(ids) {
+  const btn = document.getElementById('btn-start');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Iniciando…'; }
+  try {
+    const resp = await fetch('{{ url_for("ema.start_sessions") }}', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
+      body: JSON.stringify({ driver_ids: ids })
+    });
+    const data = await resp.json();
+    let msg = `${data.started} sessão(ões) iniciada(s).`;
+    if (data.errors && data.errors.length) msg += ' Avisos: ' + data.errors.join('; ');
+    showToast(msg, data.started > 0 ? 'ok' : 'error');
+    if (data.started > 0) setTimeout(() => location.reload(), 1800);
+  } catch(e) {
+    showToast('Erro ao iniciar sessões.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-play"></i> Iniciar EMA para selecionados'; }
+  }
+}
+
+function getCSRFToken() {
+  const input = document.querySelector('input[name="_csrf_token"]');
+  if (input) return input.value;
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  return meta ? meta.content : '';
+}
+
+// ── Auto-refresh countdown ─────────────────────────────────────────────────
+let refreshSeconds = 30;
+const countdownEl = document.getElementById('refresh-countdown');
+const refreshInterval = setInterval(() => {
+  refreshSeconds--;
+  if (countdownEl) countdownEl.textContent = refreshSeconds;
+  if (refreshSeconds <= 0) {
+    // Only auto-refresh if there are active sessions (avoid disrupting operators browsing)
+    const hasActive = document.querySelector('.driver-row[data-status="active"]');
+    if (hasActive) location.reload();
+    else { refreshSeconds = 30; }
+  }
+}, 1000);
+
+// ── SocketIO real-time ─────────────────────────────────────────────────────
+(function() {
+  if (typeof io === 'undefined') return;
+  const socket = io({ transports: ['websocket', 'polling'] });
+  socket.on('connect', () => socket.emit('join_room', 'operators'));
+  socket.on('ema_completed_notification', function(data) {
+    const notif = document.getElementById('ema-notif');
+    document.getElementById('ema-notif-title').textContent = `✅ ${data.driver_name || 'Motorista'} confirmou os dados`;
+    document.getElementById('ema-notif-body').textContent  = 'Cadastro aguardando sua validação.';
+    if (data.session_id) document.getElementById('ema-notif-link').href = `/ema/session/${data.session_id}`;
+    notif.classList.remove('hidden');
+    setTimeout(() => location.reload(), 5000);
+  });
+})();
+
+// ── Init ───────────────────────────────────────────────────────────────────
+applyFilters();
+
+// ── Webhook URL copy ────────────────────────────────────────────────────────
+function copyWebhookUrl() {
+  const el = document.getElementById('webhook-url-text');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    const btn = el.nextElementSibling;
+    btn.innerHTML = '<i class="fas fa-check"></i> Copiado!';
+    setTimeout(() => { btn.innerHTML = '<i class="fas fa-copy"></i> Copiar'; }, 2000);
+  });
+}
+
+// ── Auto-configure webhook ──────────────────────────────────────────────────
+function _showWebhookResult(msg, ok) {
+  const el = document.getElementById('webhook-result');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = `mt-3 text-xs rounded-lg p-3 font-mono whitespace-pre-wrap break-all ${ok ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`;
+  el.classList.remove('hidden');
+}
+
+async function autoConfigureWebhook() {
+  const btn = document.getElementById('btn-auto-webhook');
+  if (!btn) return;
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Configurando...';
+
+  try {
+    const csrf = document.querySelector('input[name="_csrf_token"]')?.value
+               || document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    const resp = await fetch('{{ url_for("ema.configure_webhook") }}', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+      body: '{}'
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      _showWebhookResult(
+        `✅ Webhook configurado com sucesso!\nURL registrada: ${data.webhook_url}\n\n${data.info ? JSON.stringify(data.info, null, 2) : ''}`,
+        true
+      );
+    } else {
+      _showWebhookResult(`❌ Falha ao configurar:\n${data.error}`, false);
+    }
+  } catch(e) {
+    _showWebhookResult(`❌ Erro de conexão: ${e.message}`, false);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+async function checkWebhookStatus() {
+  const el = document.getElementById('webhook-result');
+  if (!el) return;
+  el.textContent = '⏳ Consultando...';
+  el.className = 'mt-3 text-xs rounded-lg p-3 font-mono whitespace-pre-wrap break-all bg-gray-50 border border-gray-200 text-gray-700';
+  el.classList.remove('hidden');
+
+  try {
+    const resp = await fetch('{{ url_for("ema.check_webhook") }}');
+    const data = await resp.json();
+    if (data.ok) {
+      const d = data.data || {};
+      const url = d.url || d.webhook?.url || JSON.stringify(d);
+      const enabled = d.enabled !== undefined ? d.enabled : '?';
+      _showWebhookResult(
+        `📋 Configuração atual:\nURL: ${url}\nAtivo: ${enabled}\n\n${JSON.stringify(d, null, 2)}`,
+        true
+      );
+    } else {
+      _showWebhookResult(`⚠️ Sem dados: ${data.error}`, false);
+    }
+  } catch(e) {
+    _showWebhookResult(`❌ Erro: ${e.message}`, false);
+  }
+}
+</script>
+{% endblock %}

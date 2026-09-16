@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}Entrar — EMALOG{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Raleway:wght@300;400;700;900&family=Public+Sans:wght@300;400;500;600&display=swap">
+<style>
+    html, body { height: 100%; margin: 0; }
+    .login-input:focus {
+        outline: none;
+        box-shadow: 0 0 0 2px #E61D43;
+        border-color: #E61D43;
+    }
+    .login-btn:hover { background-color: #C4192D; }
+    @media (prefers-reduced-motion: reduce) {
+        .login-btn { transition: none; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="min-height:100vh; display:flex;">
+
+    <!-- ── Painel esquerdo: Identidade da marca ── -->
+    <div style="width:55%; background:#1C1C1C; position:relative; overflow:hidden;
+                display:flex; flex-direction:column; align-items:center; justify-content:center;">
+
+        <!-- Arcos concêntricos decorativos (elemento "O" do logo) -->
+        <svg style="position:absolute; top:-8rem; right:-8rem; opacity:0.2;"
+             width="800" height="800" viewBox="0 0 800 800"
+             fill="none" xmlns="http://www.w3.org/2000/svg"
+             aria-hidden="true">
+            <circle cx="400" cy="400" r="120" stroke="#FEE252" stroke-width="2.5"/>
+            <circle cx="400" cy="400" r="180" stroke="#FEE252" stroke-width="2.5"/>
+            <circle cx="400" cy="400" r="240" stroke="#FEE252" stroke-width="2.5"/>
+            <circle cx="400" cy="400" r="300" stroke="#FEE252" stroke-width="2.5"/>
+            <circle cx="400" cy="400" r="360" stroke="#FEE252" stroke-width="2.5"/>
+            <circle cx="400" cy="400" r="420" stroke="#FEE252" stroke-width="2.5"/>
+        </svg>
+
+        <!-- Logo + tagline -->
+        <div style="position:relative; z-index:10; display:flex; flex-direction:column; align-items:center;">
+            <img src="{{ url_for('static', filename='logo-emalog.png') }}?v=3"
+                 alt="EMALOG" width="320" height="auto"
+                 style="width:320px; margin-bottom:1.5rem;">
+            <p style="font-family:'Public Sans',sans-serif; font-weight:300;
+                      color:#ffffff; font-size:1.1rem; letter-spacing:0.2em;
+                      text-transform:uppercase; margin:0;">
+                Sistema de Gestão Logística
+            </p>
+        </div>
+
+        <!-- Rodapé do painel esquerdo -->
+        <div style="position:absolute; bottom:0; left:0; width:100%;">
+            <p style="position:absolute; bottom:1.25rem; left:2rem;
+                      font-family:'Public Sans',sans-serif; font-weight:400;
+                      font-size:0.7rem; letter-spacing:0.15em; text-transform:uppercase;
+                      color:#ffffff; opacity:0.5; margin:0;">
+                SÃO PAULO · BRASIL
+            </p>
+            <!-- Barra vermelha de rodapé -->
+            <div style="width:100%; height:6px; background:#E61D43;"></div>
+        </div>
+    </div>
+
+    <!-- ── Painel direito: Formulário ── -->
+    <div style="width:45%; background:#FEE252; position:relative;
+                display:flex; align-items:center; justify-content:center; padding:3rem;">
+
+        <!-- Suporte L — canto superior esquerdo -->
+        <svg style="position:absolute; top:2rem; left:2rem;" aria-hidden="true"
+             width="60" height="60" viewBox="0 0 60 60" fill="none">
+            <line x1="0" y1="1" x2="60" y2="1" stroke="#1C1C1C" stroke-width="2"/>
+            <line x1="1" y1="0" x2="1" y2="60" stroke="#1C1C1C" stroke-width="2"/>
+        </svg>
+
+        <!-- Suporte L — canto inferior direito -->
+        <svg style="position:absolute; bottom:2rem; right:2rem;" aria-hidden="true"
+             width="60" height="60" viewBox="0 0 60 60" fill="none">
+            <line x1="0" y1="59" x2="60" y2="59" stroke="#1C1C1C" stroke-width="2"/>
+            <line x1="59" y1="0" x2="59" y2="60" stroke="#1C1C1C" stroke-width="2"/>
+        </svg>
+
+        <!-- Conteúdo do formulário -->
+        <div style="width:100%; max-width:26rem;">
+
+            <!-- Label de seção -->
+            <p style="font-family:'Public Sans',sans-serif; font-weight:500;
+                      font-size:0.7rem; letter-spacing:0.15em; text-transform:uppercase;
+                      color:#1C1C1C; opacity:0.6; margin:0 0 0.5rem;">
+                ACESSO AO SISTEMA
+            </p>
+
+            <!-- Traço vermelho -->
+            <div style="width:2rem; height:2px; background:#E61D43; margin-bottom:1.5rem;"></div>
+
+            <!-- Título -->
+            <h1 style="font-family:'Raleway',sans-serif; font-weight:900;
+                       font-size:3.25rem; line-height:1.1; color:#1C1C1C;
+                       margin:0 0 2rem;">
+                Entrar
+            </h1>
+
+            <!-- Card branco com o form -->
+            <div style="background:#ffffff; border-radius:8px; padding:2rem;
+                        box-shadow:0 4px 24px rgba(0,0,0,0.08); margin-bottom:1.5rem;">
+                <form method="POST" novalidate>
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+
+                    <!-- E-mail -->
+                    <div style="margin-bottom:1.25rem;">
+                        <label for="email"
+                               style="display:block; font-family:'Public Sans',sans-serif;
+                                      font-weight:600; font-size:0.875rem;
+                                      color:#1C1C1C; margin-bottom:0.5rem;">
+                            E-mail
+                        </label>
+                        <input id="email" name="email" type="email" required
+                               autocomplete="email"
+                               placeholder="seu.email@empresa.com.br"
+                               class="login-input"
+                               style="width:100%; box-sizing:border-box; padding:0.75rem 1rem;
+                                      border:1px solid #2D2D2D; border-radius:4px;
+                                      background:#ffffff; color:#1C1C1C;
+                                      font-family:'Public Sans',sans-serif; font-size:0.9rem;
+                                      transition:box-shadow 0.15s, border-color 0.15s;">
+                    </div>
+
+                    <!-- Senha -->
+                    <div style="margin-bottom:1.25rem;">
+                        <label for="password"
+                               style="display:block; font-family:'Public Sans',sans-serif;
+                                      font-weight:600; font-size:0.875rem;
+                                      color:#1C1C1C; margin-bottom:0.5rem;">
+                            Senha
+                        </label>
+                        <input id="password" name="password" type="password" required
+                               autocomplete="current-password"
+                               placeholder="••••••••"
+                               class="login-input"
+                               style="width:100%; box-sizing:border-box; padding:0.75rem 1rem;
+                                      border:1px solid #2D2D2D; border-radius:4px;
+                                      background:#ffffff; color:#1C1C1C;
+                                      font-family:'Public Sans',sans-serif; font-size:0.9rem;
+                                      transition:box-shadow 0.15s, border-color 0.15s;">
+                    </div>
+
+                    <!-- Lembrar de mim -->
+                    <div style="display:flex; align-items:center; margin-bottom:1.5rem;">
+                        <input id="remember" name="remember" type="checkbox"
+                               style="width:1rem; height:1rem; accent-color:#E61D43;
+                                      border:1px solid #2D2D2D; border-radius:3px;
+                                      margin-right:0.5rem; cursor:pointer;">
+                        <label for="remember"
+                               style="font-family:'Public Sans',sans-serif; font-weight:400;
+                                      font-size:0.875rem; color:#1C1C1C; cursor:pointer;">
+                            Lembrar de mim
+                        </label>
+                    </div>
+
+                    <!-- Botão -->
+                    <button type="submit"
+                            class="login-btn"
+                            style="width:100%; height:52px; background:#E61D43;
+                                   color:#ffffff; border:none; border-radius:4px;
+                                   font-family:'Raleway',sans-serif; font-weight:700;
+                                   font-size:0.9rem; letter-spacing:0.08em;
+                                   text-transform:uppercase; cursor:pointer;
+                                   transition:background-color 0.15s;">
+                        ENTRAR
+                    </button>
+                </form>
+            </div>
+
+            <!-- Versão -->
+            <p style="text-align:center; font-family:'Public Sans',sans-serif;
+                      font-weight:300; font-size:0.7rem; color:#1C1C1C; opacity:0.4; margin:0;">
+                v2.0 — Gestão Logística
+            </p>
+
+        </div>
+    </div>
+
+</div>
+{% endblock %}

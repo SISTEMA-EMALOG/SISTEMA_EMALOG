@@ -1,0 +1,362 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Leads — CRM EMALOG{% endblock %}
+{% block page_title %}Leads & Prospecção{% endblock %}
+{% block page_description %}Gerencie todas as empresas prospectadas{% endblock %}
+
+{% block header_actions %}
+<div class="flex items-center gap-2">
+    <a href="{{ url_for('crm.leads_import') }}"
+       class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-sm font-medium">
+        <i class="fas fa-file-excel mr-2"></i>Importar Excel
+    </a>
+    <a href="{{ url_for('crm.leads_new') }}"
+       class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+        <i class="fas fa-plus mr-2"></i>Novo Lead
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+
+{# ── Flash messages #}
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+{% for cat, msg in messages %}
+<div class="mb-4 px-4 py-3 rounded-lg text-sm font-medium
+    {% if cat == 'error' %}bg-red-50 border border-red-200 text-red-700
+    {% elif cat == 'success' %}bg-green-50 border border-green-200 text-green-700
+    {% else %}bg-blue-50 border border-blue-200 text-blue-700{% endif %}">
+    {{ msg }}
+</div>
+{% endfor %}
+{% endif %}
+{% endwith %}
+
+{# ── Filtros ─────────────────────────────────────────────────────────────── #}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-5">
+    <form method="get" class="space-y-3">
+        {# Linha 1 #}
+        <div class="flex flex-wrap gap-3 items-end">
+            <div class="flex-1 min-w-48">
+                <label class="block text-xs font-medium text-gray-600 mb-1">Buscar</label>
+                <div class="relative">
+                    <i class="fas fa-search absolute left-3 top-2.5 text-gray-400 text-sm"></i>
+                    <input type="text" name="q" value="{{ q }}" placeholder="Empresa, CNPJ, contato, cidade..."
+                           class="pl-9 w-full border border-gray-200 rounded-lg py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+            </div>
+            <div class="min-w-36">
+                <label class="block text-xs font-medium text-gray-600 mb-1">Status</label>
+                <select name="status" class="w-full border border-gray-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500">
+                    <option value="">Todos</option>
+                    {% for sid, sname, _ in LEAD_STATUSES %}
+                    <option value="{{ sid }}" {% if status_f == sid %}selected{% endif %}>{{ sname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="min-w-36">
+                <label class="block text-xs font-medium text-gray-600 mb-1">Origem</label>
+                <select name="source" class="w-full border border-gray-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500">
+                    <option value="">Todas</option>
+                    {% for srcid, srcname in SOURCES %}
+                    <option value="{{ srcid }}" {% if source_f == srcid %}selected{% endif %}>{{ srcname }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        {# Linha 2 — filtros avançados #}
+        <div class="flex flex-wrap gap-3 items-end">
+            <div class="min-w-32">
+                <label class="block text-xs font-medium text-gray-600 mb-1">Estado (UF)</label>
+                <select name="state" class="w-full border border-gray-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500">
+                    <option value="">Todos</option>
+                    {% for uf in states_available %}
+                    <option value="{{ uf }}" {% if state_f == uf %}selected{% endif %}>{{ uf }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="min-w-36">
+                <label class="block text-xs font-medium text-gray-600 mb-1">Cidade</label>
+                <input type="text" name="city" value="{{ city_f }}" placeholder="Nome da cidade..."
+                       class="w-full border border-gray-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div class="min-w-40">
+                <label class="block text-xs font-medium text-gray-600 mb-1">Segmento / Indústria</label>
+                <input type="text" name="segment" value="{{ segment_f }}" placeholder="Ex: Alimentício, TI..."
+                       class="w-full border border-gray-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div class="min-w-32">
+                <label class="block text-xs font-medium text-gray-600 mb-1">IA</label>
+                <select name="ai" class="w-full border border-gray-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500">
+                    <option value="">Todos</option>
+                    <option value="1" {% if ai_f == '1' %}selected{% endif %}>Enriquecidos</option>
+                </select>
+            </div>
+            <div class="min-w-36">
+                <label class="block text-xs font-medium text-gray-600 mb-1">Tipo</label>
+                <select name="hot" class="w-full border border-gray-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500">
+                    <option value="">Todos</option>
+                    <option value="1" {% if request.args.get('hot') == '1' %}selected{% endif %}>⭐ Só Operacionais</option>
+                </select>
+            </div>
+            <div class="flex gap-2">
+                <button type="submit"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition">
+                    <i class="fas fa-filter mr-1"></i>Filtrar
+                </button>
+                {% if q or status_f or source_f or state_f or city_f or segment_f or ai_f or request.args.get('hot') %}
+                <a href="{{ url_for('crm.leads_index') }}"
+                   class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm transition">
+                    Limpar
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </form>
+</div>
+
+{# ── Banner de lote ativo ─────────────────────────────────────────────────── #}
+{% if active_batch %}
+<div class="mb-4 flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+    <i class="fas fa-layer-group text-blue-500"></i>
+    <div class="flex-1 text-sm">
+        <p class="font-semibold text-blue-800">Filtrando lote: {{ active_batch.name }}</p>
+        <p class="text-blue-600 text-xs mt-0.5">{{ leads.total }} lead(s) deste lote — {{ active_batch.created_at.strftime('%d/%m/%Y') }}</p>
+    </div>
+    <a href="{{ url_for('crm.leads_index') }}" class="text-xs text-blue-600 hover:underline font-medium whitespace-nowrap">Limpar filtro ×</a>
+</div>
+{% endif %}
+
+{# ── Status chips ────────────────────────────────────────────────────────── #}
+{% set chip_colors = {'gray':'bg-gray-100 text-gray-700 border-gray-200','blue':'bg-blue-50 text-blue-700 border-blue-200','green':'bg-green-50 text-green-700 border-green-200','purple':'bg-purple-50 text-purple-700 border-purple-200','teal':'bg-teal-50 text-teal-700 border-teal-200','red':'bg-red-50 text-red-700 border-red-200'} %}
+<div class="flex flex-wrap gap-2 mb-5">
+    <a href="{{ url_for('crm.leads_index', q=q, source=source_f, state=state_f, city=city_f, segment=segment_f) }}"
+       class="text-xs px-3 py-1.5 rounded-full border font-medium transition {{ 'bg-blue-600 text-white border-blue-600' if not status_f else 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50' }}">
+        Todos ({{ leads.total }})
+    </a>
+    {% for sid, sname, scolor in LEAD_STATUSES %}
+    <a href="{{ url_for('crm.leads_index', q=q, status=sid, source=source_f, state=state_f, city=city_f, segment=segment_f) }}"
+       class="text-xs px-3 py-1.5 rounded-full border font-medium transition {{ 'bg-blue-600 text-white border-blue-600' if status_f == sid else chip_colors.get(scolor,'bg-white text-gray-600 border-gray-200') + ' hover:opacity-80' }}">
+        {{ sname }} ({{ status_counts.get(sid, 0) }})
+    </a>
+    {% endfor %}
+</div>
+
+{# ── Tabela de leads ──────────────────────────────────────────────────────── #}
+{% set st_colors = {'gray':'bg-gray-100 text-gray-700','blue':'bg-blue-100 text-blue-700','green':'bg-green-100 text-green-700','purple':'bg-purple-100 text-purple-700','teal':'bg-teal-100 text-teal-700','red':'bg-red-100 text-red-700'} %}
+{% set AT_ICONS = {'ligacao':'fa-phone','email':'fa-envelope','reuniao':'fa-users','visita':'fa-map-marker-alt','proposta':'fa-file-invoice-dollar','tarefa':'fa-tasks','nota':'fa-sticky-note'} %}
+
+{% if leads.items %}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-4">
+    {# Cabeçalho com contagem #}
+    <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            {{ leads.total }} lead{{ 's' if leads.total != 1 else '' }}
+            {% if active_batch %} — {{ active_batch.name }}{% endif %}
+        </span>
+        <span class="text-xs text-gray-400">Página {{ leads.page }} de {{ leads.pages or 1 }}</span>
+    </div>
+
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-100">
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-8">#</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Empresa</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Cidade / UF</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Contato</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden xl:table-cell">Última Atividade</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Retorno</th>
+                    <th class="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Ações</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+                {% for lead in leads.items %}
+                {% set st = LEAD_STATUS_DICT.get(lead.status, ('novo','Novo','gray')) %}
+                {% set scolor = st[2] if st|length > 2 else 'gray' %}
+                {% set last_act = last_activity_per_lead.get(lead.id) %}
+                {% set qcount = quote_count_per_lead.get(lead.id, 0) %}
+                <tr class="hover:bg-blue-50/30 transition-colors group">
+
+                    {# Nº #}
+                    <td class="px-4 py-3 text-xs text-gray-300 font-mono">
+                        {{ ((leads.page - 1) * 20) + loop.index }}
+                    </td>
+
+                    {# Empresa #}
+                    <td class="px-4 py-3">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0 text-xs font-bold text-blue-700">
+                                {{ lead.company_name[0].upper() }}
+                            </div>
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-1.5">
+                                    <a href="{{ url_for('crm.leads_show', id=lead.id) }}"
+                                       class="font-semibold text-gray-900 hover:text-blue-600 transition truncate text-sm leading-tight">
+                                        {{ lead.company_name }}
+                                    </a>
+                                    {% if lead.is_hot %}
+                                    <span class="text-amber-400 text-xs flex-shrink-0"
+                                          title="Lead Operacional{% if lead.operational_count and lead.operational_count > 1 %} ({{ lead.operational_count }}x){% endif %}">
+                                        ⭐{% if lead.operational_count and lead.operational_count > 1 %}<span class="text-amber-600 font-bold text-xs">×{{ lead.operational_count }}</span>{% endif %}
+                                    </span>
+                                    {% endif %}
+                                    {% if lead.ai_enriched %}
+                                    <span class="text-purple-400 text-xs flex-shrink-0" title="Enriquecido pela IA"><i class="fas fa-robot"></i></span>
+                                    {% endif %}
+                                </div>
+                                <div class="flex items-center gap-2 mt-0.5">
+                                    {% if lead.cnpj %}
+                                    <span class="text-xs text-gray-400 font-mono">{{ lead.cnpj[:14] }}</span>
+                                    {% endif %}
+                                    {% if lead.industry_type or lead.segment %}
+                                    <span class="text-xs text-gray-400 truncate max-w-40">{{ (lead.industry_type or lead.segment)[:40] }}</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+
+                    {# Cidade/UF #}
+                    <td class="px-4 py-3 hidden md:table-cell">
+                        {% if lead.city or lead.state %}
+                        <p class="text-sm text-gray-700">{{ lead.city or '' }}</p>
+                        <p class="text-xs text-gray-400">{{ lead.state or '' }}</p>
+                        {% else %}
+                        <span class="text-gray-300">—</span>
+                        {% endif %}
+                    </td>
+
+                    {# Contato #}
+                    <td class="px-4 py-3 hidden lg:table-cell">
+                        {% if lead.contact_name %}
+                        <p class="text-sm text-gray-700 truncate max-w-36">{{ lead.contact_name }}</p>
+                        {% endif %}
+                        {% if lead.contact_phone %}
+                        <p class="text-xs text-gray-500 font-mono">{{ lead.contact_phone }}</p>
+                        {% elif lead.whatsapp %}
+                        <p class="text-xs text-green-600 font-mono"><i class="fab fa-whatsapp mr-0.5"></i>{{ lead.whatsapp }}</p>
+                        {% endif %}
+                        {% if not lead.contact_name and not lead.contact_phone and not lead.whatsapp %}
+                        <span class="text-gray-300">—</span>
+                        {% endif %}
+                    </td>
+
+                    {# Status #}
+                    <td class="px-4 py-3">
+                        <span class="text-xs px-2 py-1 rounded-full font-medium whitespace-nowrap {{ st_colors.get(scolor,'bg-gray-100 text-gray-700') }}">
+                            {{ st[1] if st|length > 1 else 'Novo' }}
+                        </span>
+                        {% if qcount > 0 %}
+                        <span class="block mt-1 text-xs text-indigo-600 font-medium">
+                            <i class="fas fa-file-invoice-dollar mr-0.5"></i>{{ qcount }} cot.
+                        </span>
+                        {% endif %}
+                    </td>
+
+                    {# Última atividade #}
+                    <td class="px-4 py-3 hidden xl:table-cell">
+                        {% if last_act %}
+                        <div class="flex items-center gap-1.5">
+                            <i class="fas {{ AT_ICONS.get(last_act.activity_type, 'fa-circle') }} text-gray-400 text-xs w-3 flex-shrink-0"></i>
+                            <span class="text-xs text-gray-600 truncate max-w-36">{{ last_act.title }}</span>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-0.5 ml-4.5">
+                            {% set diff = (now - last_act.created_at).days %}
+                            {% if diff == 0 %}hoje{% elif diff == 1 %}ontem{% else %}{{ diff }}d atrás{% endif %}
+                        </p>
+                        {% else %}
+                        <span class="text-xs text-gray-300 italic">Sem atividade</span>
+                        {% endif %}
+                    </td>
+
+                    {# Próximo retorno #}
+                    <td class="px-4 py-3 hidden lg:table-cell">
+                        {% if lead.next_contact_at %}
+                            {% set diff_nc = (lead.next_contact_at - now).days %}
+                            {% if diff_nc < 0 %}
+                            <span class="inline-flex items-center gap-1 text-xs text-red-600 font-semibold bg-red-50 px-2 py-1 rounded-lg whitespace-nowrap">
+                                <i class="fas fa-bell"></i> Vencido
+                            </span>
+                            <p class="text-xs text-red-400 mt-0.5">{{ lead.next_contact_at.strftime('%d/%m') }}</p>
+                            {% elif diff_nc == 0 %}
+                            <span class="inline-flex items-center gap-1 text-xs text-orange-600 font-semibold bg-orange-50 px-2 py-1 rounded-lg whitespace-nowrap">
+                                <i class="fas fa-bell"></i> Hoje
+                            </span>
+                            <p class="text-xs text-orange-400 mt-0.5">{{ lead.next_contact_at.strftime('%H:%M') }}</p>
+                            {% else %}
+                            <span class="text-xs text-blue-600 font-medium">{{ lead.next_contact_at.strftime('%d/%m/%Y') }}</span>
+                            <p class="text-xs text-gray-400 mt-0.5">em {{ diff_nc }}d</p>
+                            {% endif %}
+                        {% else %}
+                        <span class="text-gray-300 text-xs">—</span>
+                        {% endif %}
+                    </td>
+
+                    {# Ações #}
+                    <td class="px-4 py-3 text-right">
+                        <a href="{{ url_for('crm.leads_show', id=lead.id) }}"
+                           class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition whitespace-nowrap">
+                            Ver <i class="fas fa-chevron-right text-xs"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{# Paginação #}
+<div class="flex items-center justify-between mt-2">
+    <p class="text-sm text-gray-500">
+        Mostrando {{ ((leads.page - 1) * 20) + 1 }}–{{ ((leads.page - 1) * 20) + leads.items|length }} de {{ leads.total }} leads
+    </p>
+    {% if leads.pages > 1 %}
+    <div class="flex gap-1">
+        {% if leads.has_prev %}
+        <a href="{{ url_for('crm.leads_index', page=leads.prev_num, q=q, status=status_f, source=source_f, state=state_f, city=city_f, segment=segment_f, ai=ai_f) }}"
+           class="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 transition">← Anterior</a>
+        {% endif %}
+        {% for p in leads.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if p %}
+            <a href="{{ url_for('crm.leads_index', page=p, q=q, status=status_f, source=source_f, state=state_f, city=city_f, segment=segment_f, ai=ai_f) }}"
+               class="px-3 py-1.5 text-sm border rounded-lg transition {{ 'bg-blue-600 text-white border-blue-600' if p == leads.page else 'hover:bg-gray-50' }}">{{ p }}</a>
+            {% else %}
+            <span class="px-2 py-1.5 text-gray-400">…</span>
+            {% endif %}
+        {% endfor %}
+        {% if leads.has_next %}
+        <a href="{{ url_for('crm.leads_index', page=leads.next_num, q=q, status=status_f, source=source_f, state=state_f, city=city_f, segment=segment_f, ai=ai_f) }}"
+           class="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 transition">Próxima →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{% else %}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-16 text-center">
+    <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <i class="fas fa-search text-gray-400 text-2xl"></i>
+    </div>
+    <h3 class="text-gray-800 font-semibold mb-1">Nenhum lead encontrado</h3>
+    <p class="text-gray-500 text-sm mb-5">
+        {% if q or status_f or source_f or state_f or city_f or segment_f %}Tente outros filtros{% else %}Comece importando ou cadastrando o primeiro lead{% endif %}
+    </p>
+    {% if not (q or status_f or source_f or state_f or city_f or segment_f) %}
+    <div class="flex justify-center gap-3">
+        <a href="{{ url_for('crm.leads_import') }}"
+           class="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-sm font-medium">
+            <i class="fas fa-file-excel mr-2"></i>Importar Excel
+        </a>
+        <a href="{{ url_for('crm.leads_new') }}"
+           class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+            <i class="fas fa-plus mr-2"></i>Novo Lead
+        </a>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,31 @@
+# O desenvolvimento é em Windows e o deploy é em Linux (Elastic Beanstalk).
+# Sem isto, o git grava CRLF no working tree e o arquivo vai para o zip com
+# CRLF. O Procfile e os .sh quebram no Linux dessa forma — o interpretador
+# lê o \r como parte do comando.
+#
+# Normaliza para LF no repositório e mantém LF no disco nos arquivos que o
+# Linux executa ou interpreta.
+
+* text=auto
+
+Procfile        text eol=lf
+*.sh            text eol=lf
+*.py            text eol=lf
+*.config        text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.json          text eol=lf
+*.toml          text eol=lf
+*.txt           text eol=lf
+
+# Binários: nunca converter.
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.mp4           binary
+*.pdf           binary
+*.zip           binary
+*.db            binary
+*.xlsx          binary
+*.xls           binary

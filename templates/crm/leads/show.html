@@ -1,0 +1,727 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ lead.company_name }} — CRM{% endblock %}
+{% block page_title %}{{ lead.company_name }}{% endblock %}
+{% block page_description %}
+Lead
+{% if lead.city %}· {{ lead.city }}{% if lead.state %}/{{ lead.state }}{% endif %}{% endif %}
+{% if lead.segment %}· {{ lead.segment }}{% endif %}
+{% endblock %}
+
+{% set linked_client = lead.converted_client or client_by_cnpj %}
+
+{% block header_actions %}
+<div class="flex items-center gap-2 flex-wrap">
+    <a href="{{ url_for('crm.leads_index') }}"
+       class="px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm transition">
+        <i class="fas fa-arrow-left mr-1"></i>Leads
+    </a>
+    <a href="{{ url_for('crm.leads_edit', id=lead.id) }}"
+       class="px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm transition">
+        <i class="fas fa-edit mr-1"></i>Editar
+    </a>
+
+    {% if lead.status != 'convertido' and not lead.converted_client_id %}
+    <form method="post" action="{{ url_for('crm.leads_convert_client', id=lead.id) }}" class="inline"
+          onsubmit="return confirm('Criar cadastro de cliente a partir deste lead?')">
+        <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token','') }}">
+        <button type="submit"
+                class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition">
+            <i class="fas fa-building mr-2"></i>Converter em Cliente
+        </button>
+    </form>
+    {% endif %}
+
+    <a href="{{ url_for('crm.opp_new', lead_id=lead.id) }}"
+       class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
+        <i class="fas fa-file-invoice-dollar mr-2"></i>Nova Oportunidade
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+
+{# ── Status bar ────────────────────────────────────────────────────────────── #}
+{% set st_colors = {
+    'gray':   'border-gray-300 text-gray-500 bg-white hover:bg-gray-50',
+    'blue':   'border-blue-300 text-blue-600 bg-white hover:bg-blue-50',
+    'purple': 'border-purple-300 text-purple-600 bg-white hover:bg-purple-50',
+    'green':  'border-green-300 text-green-600 bg-white hover:bg-green-50',
+    'teal':   'border-teal-300 text-teal-600 bg-white hover:bg-teal-50',
+    'red':    'border-red-300 text-red-600 bg-white hover:bg-red-50',
+} %}
+{% set st_active = {
+    'gray':   'border-gray-500 text-gray-700 bg-gray-100 font-bold',
+    'blue':   'border-blue-600 text-blue-700 bg-blue-100 font-bold',
+    'purple': 'border-purple-600 text-purple-700 bg-purple-100 font-bold',
+    'green':  'border-green-600 text-green-700 bg-green-100 font-bold',
+    'teal':   'border-teal-600 text-teal-700 bg-teal-100 font-bold',
+    'red':    'border-red-600 text-red-700 bg-red-100 font-bold',
+} %}
+
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 px-5 py-3 mb-5 flex items-center gap-2 flex-wrap">
+    <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide mr-1">Etapa:</span>
+    {% for sid, sname, scolor in LEAD_STATUSES %}
+    <button onclick="updateLeadStatus('{{ sid }}')" id="status-btn-{{ sid }}"
+            class="px-3.5 py-1.5 text-xs rounded-full border-2 transition
+                   {% if lead.status == sid %}{{ st_active.get(scolor, st_active.gray) }}{% else %}{{ st_colors.get(scolor, st_colors.gray) }}{% endif %}">
+        {% if lead.status == sid %}<i class="fas fa-check mr-1"></i>{% endif %}{{ sname }}
+    </button>
+    {% endfor %}
+</div>
+
+{# ── Banner cliente vinculado ─────────────────────────────────────────────── #}
+{% if lead.converted_client %}
+<div class="bg-green-50 border border-green-200 rounded-xl px-5 py-3 mb-5 flex items-center gap-3">
+    <i class="fas fa-check-circle text-green-600 text-lg"></i>
+    <div class="flex-1">
+        <span class="text-sm font-semibold text-green-800">Cliente cadastrado:</span>
+        <span class="text-sm text-green-700 ml-1">{{ lead.converted_client.company_name }}</span>
+    </div>
+    <a href="{{ url_for('clients.view', id=lead.converted_client_id) }}"
+       class="text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 transition font-medium">
+        <i class="fas fa-external-link-alt mr-1"></i>Abrir ficha
+    </a>
+</div>
+{% elif client_by_cnpj %}
+<div class="bg-yellow-50 border border-yellow-200 rounded-xl px-5 py-3 mb-5 flex items-center gap-3">
+    <i class="fas fa-exclamation-triangle text-yellow-500 text-lg"></i>
+    <div class="flex-1">
+        <span class="text-sm font-semibold text-yellow-800">CNPJ já existe como cliente:</span>
+        <span class="text-sm text-yellow-700 ml-1">{{ client_by_cnpj.company_name }}</span>
+    </div>
+    <div class="flex gap-2">
+        <a href="{{ url_for('clients.view', id=client_by_cnpj.id) }}"
+           class="text-xs border border-yellow-400 text-yellow-700 px-3 py-1.5 rounded-lg hover:bg-yellow-100 transition font-medium">
+            <i class="fas fa-external-link-alt mr-1"></i>Ver cliente
+        </a>
+        <form method="post" action="{{ url_for('crm.leads_convert_client', id=lead.id) }}" class="inline">
+            <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token','') }}">
+            <button type="submit" class="text-xs bg-yellow-500 text-white px-3 py-1.5 rounded-lg hover:bg-yellow-600 transition font-medium">
+                <i class="fas fa-link mr-1"></i>Vincular
+            </button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+{# ── Layout principal ──────────────────────────────────────────────────────── #}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+    {# ══ COLUNA ESQUERDA — dados da empresa ═══════════════════════════════════ #}
+    <div class="space-y-4">
+
+        {# Empresa #}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            {% if lead.cnpj %}
+            <div class="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100">
+                <span class="text-xs text-gray-400 font-semibold uppercase tracking-wide">CNPJ</span>
+                <span class="font-mono text-sm text-gray-700 bg-gray-100 px-2 py-0.5 rounded select-all">{{ lead.cnpj }}</span>
+                {% if lead.ai_enriched %}
+                <span class="ml-auto text-xs text-purple-600 bg-purple-50 border border-purple-100 px-2 py-0.5 rounded-full" title="Enriquecido pelo Agente IA">
+                    <i class="fas fa-robot mr-1"></i>IA
+                </span>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <div class="flex items-center gap-3 mb-4">
+                <div class="w-11 h-11 rounded-xl bg-blue-100 flex items-center justify-center flex-shrink-0">
+                    <span class="text-lg font-bold text-blue-700">{{ lead.company_name[0].upper() }}</span>
+                </div>
+                <div>
+                    <h2 class="font-bold text-gray-900">{{ lead.company_name }}</h2>
+                    {% if lead.industry_type %}
+                    <p class="text-xs text-purple-600 font-medium">{{ lead.industry_type }}</p>
+                    {% elif lead.segment %}
+                    <p class="text-xs text-gray-500">{{ lead.segment }}</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="space-y-2 text-sm">
+                {% if lead.estimated_monthly_value %}
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-dollar-sign w-4 text-gray-400"></i>
+                    <span class="font-semibold text-green-700">R$ {{ '{:,.0f}'.format(lead.estimated_monthly_value).replace(',','.') }}/mês estimado</span>
+                </div>
+                {% endif %}
+                {% if lead.employee_count %}
+                <div class="flex items-center gap-2 text-gray-600">
+                    <i class="fas fa-users w-4 text-gray-400"></i>
+                    <span>{{ lead.employee_count }} funcionários</span>
+                </div>
+                {% endif %}
+                {% if lead.website %}
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-globe w-4 text-gray-400"></i>
+                    <a href="{{ lead.website if lead.website.startswith('http') else 'https://' + lead.website }}"
+                       target="_blank" rel="noopener"
+                       class="text-blue-600 hover:underline text-sm truncate">{{ lead.website }}</a>
+                </div>
+                {% endif %}
+                <div class="flex items-center gap-2 text-gray-500 text-xs">
+                    <i class="fas fa-tag w-4 text-gray-400"></i>
+                    <span>{{ SOURCES_DICT.get(lead.source, 'Outro') }}</span>
+                    <span class="mx-1 text-gray-300">·</span>
+                    <span>Criado {{ lead.created_at.strftime('%d/%m/%Y') }}</span>
+                </div>
+                {% if lead.salesperson %}
+                <div class="flex items-center gap-2 text-gray-500 text-xs">
+                    <i class="fas fa-user w-4 text-gray-400"></i>
+                    <span>Resp: {{ lead.salesperson.username }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {# Contato #}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+                <i class="fas fa-address-book text-blue-400"></i> Contato
+            </h3>
+            <div class="space-y-2.5 text-sm">
+                {% if lead.contact_name %}
+                <div class="flex items-center gap-2 text-gray-800 font-medium">
+                    <i class="fas fa-user w-4 text-gray-400"></i>{{ lead.contact_name }}
+                </div>
+                {% endif %}
+
+                {% if lead.contact_phone %}
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-phone w-4 text-gray-400"></i>
+                    <a href="tel:{{ lead.contact_phone }}" class="text-gray-700 hover:text-blue-600 transition">{{ lead.contact_phone }}</a>
+                </div>
+                {% endif %}
+
+                {% if lead.whatsapp %}
+                <div class="flex items-center gap-2">
+                    <i class="fab fa-whatsapp w-4 text-green-500"></i>
+                    <a href="https://wa.me/55{{ lead.whatsapp | replace('(','') | replace(')','') | replace('-','') | replace(' ','') }}"
+                       target="_blank" class="text-green-600 hover:text-green-700 transition">{{ lead.whatsapp }}</a>
+                    <span class="text-xs text-gray-400">(WhatsApp)</span>
+                </div>
+                {% elif lead.contact_phone %}
+                <a href="https://wa.me/55{{ lead.contact_phone | replace('(','') | replace(')','') | replace('-','') | replace(' ','') }}"
+                   target="_blank"
+                   class="flex items-center gap-2 text-green-600 hover:text-green-700 transition text-xs">
+                    <i class="fab fa-whatsapp w-4"></i>Abrir no WhatsApp
+                </a>
+                {% endif %}
+
+                {% if lead.contact_email %}
+                <a href="mailto:{{ lead.contact_email }}"
+                   class="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition">
+                    <i class="fas fa-envelope w-4 text-gray-400"></i>{{ lead.contact_email }}
+                </a>
+                {% endif %}
+
+                {% if not lead.contact_name and not lead.contact_phone and not lead.contact_email %}
+                <p class="text-xs text-gray-400 italic">Nenhum contato cadastrado.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {# Endereço #}
+        {% set has_addr = lead.street or lead.city or lead.address or lead.zip_code %}
+        {% if has_addr %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+                <i class="fas fa-map-marker-alt text-red-400"></i> Endereço
+            </h3>
+            <div class="text-sm text-gray-700 space-y-1 leading-relaxed">
+                {% if lead.street %}
+                <p>{{ lead.street }}{% if lead.number_addr %}, {{ lead.number_addr }}{% endif %}{% if lead.complement %} — {{ lead.complement }}{% endif %}</p>
+                {% endif %}
+                {% if lead.neighborhood %}
+                <p class="text-gray-500">{{ lead.neighborhood }}</p>
+                {% endif %}
+                {% if lead.city %}
+                <p>{{ lead.city }}{% if lead.state %}/{{ lead.state }}{% endif %}{% if lead.zip_code %} · CEP {{ lead.zip_code }}{% endif %}</p>
+                {% elif lead.address %}
+                <p>{{ lead.address }}</p>
+                {% endif %}
+            </div>
+            {% if lead.city %}
+            <a href="https://maps.google.com/?q={{ (lead.street or lead.address or lead.company_name) + ', ' + lead.city }}"
+               target="_blank" rel="noopener"
+               class="mt-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                <i class="fas fa-map-marked-alt"></i> Ver no mapa
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {# Notas estáticas #}
+        {% if lead.notes %}
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <h3 class="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+                <i class="fas fa-sticky-note"></i> Notas do cadastro
+            </h3>
+            <p class="text-sm text-amber-900 leading-relaxed whitespace-pre-wrap">{{ lead.notes }}</p>
+        </div>
+        {% endif %}
+
+    </div>
+
+    {# ══ COLUNA DIREITA — workspace de vendas ════════════════════════════════ #}
+    <div class="lg:col-span-2 space-y-5">
+
+        {# ── Registrar ação / observação ──────────────────────────────────── #}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="px-5 py-4 bg-gray-50 border-b border-gray-100">
+                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <i class="fas fa-pen-alt text-blue-500"></i> Registrar Ação / Observação
+                </h3>
+            </div>
+            <form method="post" action="{{ url_for('crm.leads_add_activity', id=lead.id) }}" class="p-5">
+                <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token','') }}">
+
+                {# Tipo de atividade #}
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                    {% for tid, tname, ticon, tcolor in ACTIVITY_TYPES %}
+                    <label class="flex items-center gap-2 cursor-pointer border border-gray-200 rounded-lg px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50">
+                        <input type="radio" name="activity_type" value="{{ tid }}" class="sr-only"
+                               {% if tid == 'ligacao' %}checked{% endif %}>
+                        <i class="{{ ticon }} text-{{ tcolor }}-500 text-sm"></i>
+                        <span class="text-xs font-medium text-gray-700">{{ tname }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+
+                {# Título #}
+                <input type="text" name="title" required placeholder="O que foi feito ou combinado? *"
+                       class="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-3">
+
+                {# Detalhes #}
+                <textarea name="notes" rows="2" placeholder="Detalhes adicionais (opcional)..."
+                          class="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none mb-3"></textarea>
+
+                {# Linha: agendamento + mover etapa #}
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3 p-3 bg-amber-50 rounded-lg border border-amber-100">
+                    <div>
+                        <label class="block text-xs font-semibold text-amber-700 mb-1">
+                            <i class="fas fa-bell mr-1"></i>Agendar próximo contato
+                        </label>
+                        <input type="datetime-local" name="scheduled_at"
+                               class="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:border-transparent bg-white">
+                        <p class="text-xs text-amber-600 mt-1">Deixe vazio se não precisar de lembrete</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-blue-700 mb-1">
+                            <i class="fas fa-arrow-right mr-1"></i>Mover lead para etapa
+                        </label>
+                        <select name="new_status"
+                                class="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400 bg-white">
+                            <option value="">— manter etapa atual —</option>
+                            {% for sid, sname, _ in LEAD_STATUSES %}
+                            <option value="{{ sid }}" {% if lead.status == sid %}selected{% endif %}>{{ sname }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                {# Rodapé: concluída + salvar #}
+                <div class="flex items-center justify-between gap-3">
+                    <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+                        <input type="checkbox" name="is_done" value="1" checked class="rounded accent-blue-600">
+                        Já concluída
+                    </label>
+                    <button type="submit"
+                            class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition">
+                        <i class="fas fa-save mr-2"></i>Salvar Ação
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        {# ── Timeline de atividades ───────────────────────────────────────── #}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <i class="fas fa-history text-gray-400"></i> Histórico de Ações
+                    {% if activities %}
+                    <span class="bg-gray-100 text-gray-600 text-xs font-bold px-1.5 py-0.5 rounded-full">{{ activities|length }}</span>
+                    {% endif %}
+                </h3>
+            </div>
+
+            {% if activities %}
+            <div class="divide-y divide-gray-50">
+                {% for act in activities %}
+                {% set AT_ICONS = {
+                    'ligacao':  ('fa-phone', 'blue'),
+                    'email':    ('fa-envelope', 'indigo'),
+                    'reuniao':  ('fa-users', 'purple'),
+                    'visita':   ('fa-map-marker-alt', 'green'),
+                    'proposta': ('fa-file-invoice-dollar', 'amber'),
+                    'tarefa':   ('fa-tasks', 'orange'),
+                    'nota':     ('fa-sticky-note', 'gray'),
+                } %}
+                {% set icon_info = AT_ICONS.get(act.activity_type, ('fa-circle', 'gray')) %}
+                {% set is_pending = not act.is_done and act.scheduled_at %}
+                <div class="px-5 py-3.5 flex gap-3 {{ 'bg-amber-50' if is_pending else '' }}">
+                    <div class="w-8 h-8 rounded-full bg-{{ icon_info[1] }}-100 flex items-center justify-center flex-shrink-0 mt-0.5 relative">
+                        <i class="fas {{ icon_info[0] }} text-{{ icon_info[1] }}-600 text-xs"></i>
+                        {% if is_pending %}
+                        <span class="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full border border-white"></span>
+                        {% endif %}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-start justify-between gap-2">
+                            <p class="text-sm font-medium text-gray-800 leading-tight">{{ act.title }}</p>
+                            <span class="text-xs text-gray-400 flex-shrink-0 mt-0.5">
+                                {{ act.created_at.strftime('%d/%m/%Y %H:%M') }}
+                            </span>
+                        </div>
+                        {% if act.notes %}
+                        <p class="text-xs text-gray-500 mt-1 leading-relaxed">{{ act.notes }}</p>
+                        {% endif %}
+                        {% if act.scheduled_at %}
+                        {% set now_dt = now if now is defined else '' %}
+                        <p class="text-xs mt-1 {% if not act.is_done %}text-amber-700 font-medium{% else %}text-gray-400{% endif %}">
+                            <i class="fas fa-bell mr-1"></i>
+                            {% if act.is_done %}Retorno foi: {% else %}Retorno agendado: {% endif %}
+                            {{ act.scheduled_at.strftime('%d/%m/%Y %H:%M') }}
+                        </p>
+                        {% endif %}
+                        <div class="flex items-center gap-3 mt-2 flex-wrap">
+                            {% if act.creator %}
+                            <span class="text-xs text-gray-400">{{ act.creator.username }}</span>
+                            {% endif %}
+                            {% if act.is_done %}
+                            <span class="text-xs text-green-600"><i class="fas fa-check mr-0.5"></i>Concluída</span>
+                            {% else %}
+                            {# ── Ação pendente: botões inline ─────────────────────── #}
+                            {% if act.scheduled_at %}
+                            <span class="text-xs text-amber-600 font-semibold"><i class="fas fa-clock mr-0.5"></i>Aguardando retorno</span>
+                            {% endif %}
+
+                            {# Botão: Marcar como feita #}
+                            <form method="post" action="{{ url_for('crm.activity_done', id=act.id) }}" class="inline">
+                                <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token','') }}">
+                                <input type="hidden" name="_redirect_lead" value="1">
+                                <button type="submit"
+                                        class="text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded-full px-3 py-0.5 transition"
+                                        onclick="return confirm('Marcar atividade como concluída?')">
+                                    <i class="fas fa-check mr-1"></i>Feita
+                                </button>
+                            </form>
+
+                            {# Botão: Reagendar (toggle inline) #}
+                            <button type="button"
+                                    onclick="toggleReschedule('resc-{{ act.id }}')"
+                                    class="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full px-3 py-0.5 transition">
+                                <i class="fas fa-calendar-alt mr-1"></i>Reagendar
+                            </button>
+                            {% endif %}
+                        </div>
+
+                        {# Mini-formulário de reagendamento (oculto por padrão) #}
+                        {% if not act.is_done %}
+                        <div id="resc-{{ act.id }}" class="hidden mt-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                            <p class="text-xs font-semibold text-blue-700 mb-2"><i class="fas fa-calendar-alt mr-1"></i>Nova data de retorno</p>
+                            <form method="post" action="{{ url_for('crm.activity_reschedule', id=act.id) }}" class="flex items-center gap-2">
+                                <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token','') }}">
+                                <input type="datetime-local" name="new_scheduled_at"
+                                       value="{{ act.scheduled_at.strftime('%Y-%m-%dT%H:%M') if act.scheduled_at else '' }}"
+                                       class="flex-1 border border-blue-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-400 bg-white"
+                                       required>
+                                <button type="submit"
+                                        class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition">
+                                    Salvar
+                                </button>
+                                <button type="button" onclick="toggleReschedule('resc-{{ act.id }}')"
+                                        class="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-600 text-xs font-semibold rounded-lg border border-gray-200 transition">
+                                    Cancelar
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="py-10 text-center text-gray-400">
+                <i class="fas fa-history text-3xl text-gray-200 mb-2"></i>
+                <p class="text-sm">Nenhuma ação registrada ainda</p>
+                <p class="text-xs mt-1 text-gray-300">Use o formulário acima para registrar a primeira interação</p>
+            </div>
+            {% endif %}
+        </div>
+
+        {# ── Cotações diretas do cliente ──────────────────────────────────── #}
+        {% if direct_quotes %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <i class="fas fa-file-invoice-dollar text-blue-500"></i> Cotações
+                    <span class="bg-blue-100 text-blue-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{{ direct_quotes|length }}</span>
+                </h3>
+            </div>
+            <div class="divide-y divide-gray-50">
+                {% for q in direct_quotes %}
+                {% set qbg = {
+                    'pendente':   'bg-yellow-50 text-yellow-700 border-yellow-200',
+                    'cotada':     'bg-blue-50 text-blue-700 border-blue-200',
+                    'negociacao': 'bg-purple-50 text-purple-700 border-purple-200',
+                    'aprovada':   'bg-green-50 text-green-700 border-green-200',
+                    'rejeitada':  'bg-red-50 text-red-700 border-red-200',
+                } %}
+                <a href="{{ url_for('quotes.view', id=q.id) }}"
+                   class="flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition">
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs px-2.5 py-1 rounded-full border font-semibold {{ qbg.get(q.status, 'bg-gray-50 text-gray-600 border-gray-200') }}">
+                            {{ {'pendente':'Pendente','cotada':'Aguard. Cliente','negociacao':'Negociação','aprovada':'Aprovada','rejeitada':'Rejeitada'}.get(q.status, q.status) }}
+                        </span>
+                        <span class="text-sm font-medium text-gray-800">{{ q.quote_number }}</span>
+                        <span class="text-xs text-gray-400">{{ q.created_at.strftime('%d/%m/%Y') }}</span>
+                    </div>
+                    {% if q.sale_value %}
+                    <span class="text-sm font-bold text-gray-900">R$ {{ '{:,.0f}'.format(q.sale_value).replace(',','.') }}</span>
+                    {% endif %}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {# ── Oportunidades ────────────────────────────────────────────────── #}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <i class="fas fa-funnel-dollar text-violet-500"></i> Oportunidades
+                    {% if opportunities %}
+                    <span class="bg-violet-100 text-violet-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{{ opportunities|length }}</span>
+                    {% endif %}
+                </h3>
+                <a href="{{ url_for('crm.opp_new', lead_id=lead.id) }}"
+                   class="text-xs text-blue-600 hover:underline font-medium flex items-center gap-1">
+                    <i class="fas fa-plus"></i> Nova
+                </a>
+            </div>
+
+            {% if opportunities %}
+            <div class="divide-y divide-gray-50">
+                {% for opp in opportunities %}
+                {% set s = STAGE_DICT.get(opp.stage, ('prospeccao','Prospecção','gray',10)) %}
+                {% set stbg = {
+                    'gray':'bg-gray-100 text-gray-700','blue':'bg-blue-100 text-blue-700',
+                    'indigo':'bg-indigo-100 text-indigo-700','purple':'bg-purple-100 text-purple-700',
+                    'amber':'bg-amber-100 text-amber-700','green':'bg-green-100 text-green-700','red':'bg-red-100 text-red-700'
+                } %}
+                {% set stbar = {
+                    'gray':'bg-gray-300','blue':'bg-blue-500','indigo':'bg-indigo-500',
+                    'purple':'bg-purple-500','amber':'bg-amber-500','green':'bg-green-500','red':'bg-red-400'
+                } %}
+                <div class="px-5 py-4">
+                    <div class="flex items-start justify-between mb-2">
+                        <div class="flex-1">
+                            <h4 class="text-sm font-semibold text-gray-900">{{ opp.title }}</h4>
+                            {% if opp.freight_origin and opp.freight_destination %}
+                            <p class="text-xs text-gray-500 mt-0.5">
+                                <i class="fas fa-route text-gray-300 mr-1"></i>
+                                {{ opp.freight_origin }} → {{ opp.freight_destination }}
+                                {% if opp.vehicle_type %} · {{ opp.vehicle_type }}{% endif %}
+                            </p>
+                            {% endif %}
+                        </div>
+                        <div class="flex items-center gap-2 ml-3">
+                            <span class="text-xs px-2.5 py-1 rounded-full font-semibold {{ stbg.get(s[2],'bg-gray-100 text-gray-700') }}">{{ s[1] }}</span>
+                            <div class="flex gap-1">
+                                <button onclick="openOppStageModal({{ opp.id }}, '{{ opp.stage }}')"
+                                        class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition text-xs" title="Mover estágio">
+                                    <i class="fas fa-arrows-alt"></i>
+                                </button>
+                                <form method="post" action="{{ url_for('crm.opp_delete', id=opp.id) }}"
+                                      onsubmit="return confirm('Remover esta oportunidade?')" class="inline">
+                                    <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token','') }}">
+                                    <button type="submit" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition text-xs">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-4 mt-1">
+                        {% if opp.value %}
+                        <span class="text-sm font-bold text-gray-900">R$ {{ '{:,.2f}'.format(opp.value).replace(',','X').replace('.',',').replace('X','.') }}</span>
+                        {% endif %}
+                        {% if opp.expected_close_date %}
+                        <span class="text-xs text-gray-400"><i class="fas fa-calendar-alt mr-1"></i>{{ opp.expected_close_date.strftime('%d/%m/%Y') }}</span>
+                        {% endif %}
+                        <span class="text-xs text-gray-400 ml-auto">{{ opp.probability }}%</span>
+                    </div>
+                    <div class="mt-2 w-full bg-gray-100 rounded-full h-1">
+                        <div class="{{ stbar.get(s[2],'bg-gray-300') }} h-1 rounded-full" style="width: {{ opp.probability }}%"></div>
+                    </div>
+
+                    {# Cotações da oportunidade #}
+                    {% set opp_quotes = quotes_by_opp.get(opp.id, []) %}
+                    <div class="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
+                        <span class="text-xs text-gray-400">
+                            <i class="fas fa-file-invoice mr-1"></i>
+                            {% if opp_quotes %}{{ opp_quotes|length }} cotação(ões){% else %}Sem cotações{% endif %}
+                        </span>
+                        {% if opp.stage not in ('ganho', 'perdido') %}
+                        <a href="{{ url_for('crm.opp_create_quote', id=opp.id) }}"
+                           class="text-xs font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-lg transition flex items-center gap-1">
+                            <i class="fas fa-plus"></i> Gerar Cotação
+                        </a>
+                        {% endif %}
+                    </div>
+                    {% if opp_quotes %}
+                    <div class="mt-2 space-y-1">
+                        {% for q in opp_quotes %}
+                        {% set qbg = {
+                            'pendente':   'bg-yellow-50 text-yellow-700 border-yellow-200',
+                            'cotada':     'bg-blue-50 text-blue-700 border-blue-200',
+                            'negociacao': 'bg-purple-50 text-purple-700 border-purple-200',
+                            'aprovada':   'bg-green-50 text-green-700 border-green-200',
+                            'rejeitada':  'bg-red-50 text-red-700 border-red-200'
+                        } %}
+                        {% set qlabel = {
+                            'pendente':   'Ag. Precificação',
+                            'cotada':     'Ag. Cliente',
+                            'negociacao': 'Em Negociação',
+                            'aprovada':   'Aprovada',
+                            'rejeitada':  'Rejeitada'
+                        } %}
+                        <a href="{{ url_for('quotes.view', id=q.id) }}"
+                           class="flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-medium hover:opacity-80 {{ qbg.get(q.status,'bg-gray-50 text-gray-600 border-gray-200') }}">
+                            <span><i class="fas fa-file-invoice mr-1"></i>{{ q.quote_number }}</span>
+                            <span class="flex items-center gap-2">
+                                <span class="opacity-70">{{ qlabel.get(q.status, q.status) }}</span>
+                                {% if q.sale_value %}· R$ {{ '{:,.0f}'.format(q.sale_value).replace(',','.') }}{% endif %}
+                                <i class="fas fa-chevron-right opacity-40"></i>
+                            </span>
+                        </a>
+                        {# Frete vinculado a esta cotação #}
+                        {% set linked_freight = freights_by_quote.get(q.id) %}
+                        {% if linked_freight %}
+                        {% set fbg = {
+                            'ofertado':   ('bg-gray-50 border-gray-200 text-gray-600',   'fa-bullhorn',      'Ofertado'),
+                            'aceito':     ('bg-indigo-50 border-indigo-200 text-indigo-700', 'fa-handshake', 'Motorista Atribuído'),
+                            'em_coleta':  ('bg-orange-50 border-orange-200 text-orange-700', 'fa-dolly',     'Em Coleta'),
+                            'em_transito':('bg-blue-50 border-blue-200 text-blue-700',   'fa-truck',         'Em Trânsito'),
+                            'entregue':   ('bg-green-50 border-green-200 text-green-700','fa-check-circle',  'Entregue'),
+                            'cancelado':  ('bg-red-50 border-red-200 text-red-700',      'fa-ban',           'Cancelado'),
+                        }.get(linked_freight.status, ('bg-gray-50 border-gray-200 text-gray-600','fa-truck','—')) %}
+                        <a href="{{ url_for('freight.view', id=linked_freight.id) }}"
+                           class="flex items-center justify-between px-3 py-2 ml-3 rounded-lg border text-xs font-medium hover:opacity-80 {{ fbg[0] }}">
+                            <span><i class="fas {{ fbg[1] }} mr-1"></i>{{ linked_freight.freight_number }}</span>
+                            <span class="flex items-center gap-2">
+                                <span class="font-semibold">{{ fbg[2] }}</span>
+                                {% if linked_freight.assigned_driver %}<span class="opacity-60">· {{ linked_freight.assigned_driver.name }}</span>{% endif %}
+                                <i class="fas fa-chevron-right opacity-40"></i>
+                            </span>
+                        </a>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="py-8 text-center text-gray-400">
+                <i class="fas fa-funnel-dollar text-3xl text-gray-200 mb-2"></i>
+                <p class="text-sm">Nenhuma oportunidade ainda</p>
+                <a href="{{ url_for('crm.opp_new', lead_id=lead.id) }}"
+                   class="mt-2 inline-block text-sm text-blue-600 hover:underline">Criar primeira oportunidade</a>
+            </div>
+            {% endif %}
+        </div>
+
+    </div>
+</div>
+
+{# ── Modal mover estágio oportunidade ─────────────────────────────────────── #}
+<div id="oppStageModal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeOppStageModal()">
+    <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm">
+        <h3 class="font-semibold text-gray-800 mb-4">Mover Estágio da Oportunidade</h3>
+        <form method="post" id="oppStageForm">
+            <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token','') }}">
+            <div class="space-y-2 mb-5">
+                {% for sid, sname, scolor, sprob in STAGES %}
+                {% set stageBtns = {
+                    'gray':'border-gray-200 hover:bg-gray-50','blue':'border-blue-200 hover:bg-blue-50',
+                    'indigo':'border-indigo-200 hover:bg-indigo-50','purple':'border-purple-200 hover:bg-purple-50',
+                    'amber':'border-amber-200 hover:bg-amber-50','green':'border-green-200 hover:bg-green-50','red':'border-red-200 hover:bg-red-50'
+                } %}
+                <label class="flex items-center gap-3 border {{ stageBtns.get(scolor,'border-gray-200') }} rounded-lg px-4 py-2.5 cursor-pointer has-[:checked]:bg-blue-50 has-[:checked]:border-blue-500">
+                    <input type="radio" name="stage" value="{{ sid }}" class="accent-blue-600">
+                    <span class="text-sm font-medium text-gray-700">{{ sname }}</span>
+                    <span class="ml-auto text-xs text-gray-400">{{ sprob }}%</span>
+                </label>
+                {% endfor %}
+            </div>
+            <div id="lostReasonGroup" class="hidden mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Motivo da perda</label>
+                <textarea name="lost_reason" rows="2" placeholder="Por que foi perdida?"
+                          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+            </div>
+            <div class="flex gap-3">
+                <button type="button" onclick="closeOppStageModal()"
+                        class="flex-1 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition">Cancelar</button>
+                <button type="submit" class="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition">Salvar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function updateLeadStatus(sid) {
+    fetch('{{ url_for("crm.leads_update_status", id=lead.id) }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ session.get("_csrf_token","") }}'
+        },
+        body: JSON.stringify({ status: sid })
+    }).then(r => r.json()).then(d => {
+        if (d.success) location.reload();
+    });
+}
+
+function openOppStageModal(oppId, currentStage) {
+    const form = document.getElementById('oppStageForm');
+    form.action = `/crm/opportunities/${oppId}/stage`;
+    const radios = form.querySelectorAll('input[type=radio]');
+    radios.forEach(r => { if (r.value === currentStage) r.checked = true; });
+    document.getElementById('oppStageModal').classList.remove('hidden');
+    form.querySelectorAll('input[name=stage]').forEach(r => {
+        r.addEventListener('change', () => {
+            document.getElementById('lostReasonGroup').classList.toggle('hidden', r.value !== 'perdido');
+        });
+    });
+}
+function closeOppStageModal() {
+    document.getElementById('oppStageModal').classList.add('hidden');
+}
+
+// Highlight activity type radio selection
+document.querySelectorAll('input[name="activity_type"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+        document.querySelectorAll('label:has(input[name="activity_type"])').forEach(l => {
+            l.classList.remove('border-blue-500', 'bg-blue-50');
+            l.classList.add('border-gray-200');
+        });
+        if (this.checked) {
+            this.closest('label').classList.add('border-blue-500', 'bg-blue-50');
+            this.closest('label').classList.remove('border-gray-200');
+        }
+    });
+    if (radio.checked) {
+        radio.closest('label').classList.add('border-blue-500', 'bg-blue-50');
+        radio.closest('label').classList.remove('border-gray-200');
+    }
+});
+
+function toggleReschedule(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden');
+}
+</script>
+{% endblock %}

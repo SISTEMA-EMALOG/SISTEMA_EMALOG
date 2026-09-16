@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Banco local de desenvolvimento
+instance/*.db
+instance/*.sqlite
+instance/*.sqlite3
+*/instance/*.db
+
+# Uploads de runtime (anexos vão para o S3, não para o repositório)
+uploads/*
+!uploads/.gitkeep
+
+# SEGREDOS — nunca versionar.
+# O arquivo real fica apenas na máquina/no zip de deploy.
+# Versione somente o .example, com placeholders.
+.ebextensions/session-secret.config
+.env
+
+# Artefatos de build/deploy
+*.zip

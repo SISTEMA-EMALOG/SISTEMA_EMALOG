@@ -1,0 +1,247 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Revisar Importação — CRM EMALOG{% endblock %}
+{% block page_title %}Revisar Leads para Importar{% endblock %}
+{% block page_description %}Confira os dados antes de confirmar a importação{% endblock %}
+
+{% block header_actions %}
+<a href="{{ url_for('crm.leads_import') }}"
+   class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium transition">
+    <i class="fas fa-times mr-2"></i>Cancelar
+</a>
+{% endblock %}
+
+{% block content %}
+
+{# ── Resumo ─────────────────────────────────────────────────────────────────── #}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6 flex flex-wrap items-center gap-6">
+    <div class="flex items-center gap-3">
+        <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+            <i class="fas fa-file-excel text-blue-600 text-xl"></i>
+        </div>
+        <div>
+            <p class="text-xs text-gray-500">Arquivo</p>
+            <p class="font-semibold text-gray-800 text-sm">{{ filename or 'Planilha importada' }}</p>
+            {% if detection == 'pattern' %}
+            <span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+                <i class="fas fa-magic mr-1"></i>Colunas detectadas automaticamente
+            </span>
+            {% else %}
+            <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                <i class="fas fa-check mr-1"></i>Cabeçalho reconhecido
+            </span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="flex flex-wrap gap-4 flex-1">
+        <div class="text-center px-5 py-3 bg-green-50 rounded-xl border border-green-100">
+            <p class="text-2xl font-bold text-green-700">{{ valid_leads | length }}</p>
+            <p class="text-xs text-green-600 mt-0.5">Leads a importar</p>
+        </div>
+        {% if skipped_count %}
+        <div class="text-center px-5 py-3 bg-orange-50 rounded-xl border border-orange-100">
+            <p class="text-2xl font-bold text-orange-600">{{ skipped_count }}</p>
+            <p class="text-xs text-orange-500 mt-0.5">Ignorados (sem nome)</p>
+        </div>
+        {% endif %}
+        {% if phones_fixed %}
+        <div class="text-center px-5 py-3 bg-purple-50 rounded-xl border border-purple-200">
+            <p class="text-2xl font-bold text-purple-700">{{ phones_fixed }}</p>
+            <p class="text-xs text-purple-600 mt-0.5">Telefones corrigidos</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{# ── Banner do Agente de Telefones ────────────────────────────────────────────── #}
+{% if phones_fixed %}
+<div class="mb-5 bg-purple-50 border border-purple-200 rounded-xl p-4">
+    <div class="flex items-start gap-3">
+        <div class="w-9 h-9 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <i class="fas fa-robot text-purple-600"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+            <p class="font-semibold text-purple-800 text-sm">
+                Agente de DDD corrigiu {{ phones_fixed }} telefone{{ 's' if phones_fixed != 1 else '' }} automaticamente
+            </p>
+            <p class="text-xs text-purple-600 mt-0.5">
+                Números sem DDD foram identificados pela cidade/UF e já estão prontos para uso.
+                Telefones marcados com <span class="bg-purple-100 text-purple-700 px-1.5 rounded font-mono text-xs">DDD</span> foram corrigidos.
+            </p>
+            {% if phone_corrections %}
+            <div class="mt-3 max-h-36 overflow-y-auto space-y-1">
+                {% for c in phone_corrections[:10] %}
+                <div class="flex items-center gap-2 text-xs bg-white border border-purple-100 rounded-lg px-3 py-1.5">
+                    <span class="text-gray-600 font-medium truncate max-w-40" title="{{ c.company_name }}">{{ c.company_name }}</span>
+                    <span class="text-gray-300">·</span>
+                    <span class="line-through text-gray-400 font-mono">{{ c.before }}</span>
+                    <i class="fas fa-arrow-right text-purple-400 text-xs flex-shrink-0"></i>
+                    <span class="text-purple-700 font-mono font-semibold">{{ c.after }}</span>
+                    <span class="ml-auto bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded text-xs font-mono flex-shrink-0">+{{ c.ddd }}</span>
+                </div>
+                {% endfor %}
+                {% if phone_corrections | length > 10 %}
+                <p class="text-xs text-purple-500 text-center pt-1">… e mais {{ phone_corrections | length - 10 }} correção(ões)</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if not valid_leads %}
+<div class="bg-orange-50 border border-orange-200 rounded-xl p-6 text-center text-orange-700">
+    <i class="fas fa-exclamation-triangle text-3xl mb-3 block"></i>
+    <p class="font-semibold">Nenhum lead válido encontrado no arquivo.</p>
+    <p class="text-sm mt-1">Verifique se o arquivo possui a coluna de nome da empresa preenchida.</p>
+    <a href="{{ url_for('crm.leads_import') }}" class="mt-4 inline-block px-4 py-2 bg-orange-600 text-white rounded-lg text-sm">Fazer novo upload</a>
+</div>
+{% else %}
+
+{# ── Opções de importação ────────────────────────────────────────────────────── #}
+<form method="post" action="{{ url_for('crm.leads_import_confirm') }}" id="confirmForm">
+    <input type="hidden" name="_csrf_token" value="{{ session.get('_csrf_token','') }}">
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-5">
+        <h4 class="text-sm font-semibold text-gray-700 mb-4"><i class="fas fa-layer-group mr-2 text-blue-500"></i>Dados do Lote</h4>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Nome do Lote <span class="text-red-500">*</span></label>
+                <input type="text" name="batch_name"
+                       placeholder="Ex: Transportadoras SP — Mai/2026"
+                       required
+                       class="w-full border border-gray-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500"
+                       value="{{ filename | replace('.xlsx','') | replace('.xls','') | replace('.csv','') }}">
+                <p class="text-xs text-gray-400 mt-1">Dê um nome descritivo para identificar este grupo de leads</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Responsável pelos Leads</label>
+                <select name="assigned_id" class="w-full border border-gray-200 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-blue-500">
+                    <option value="">— Manter o selecionado anteriormente —</option>
+                    {% for seller in sellers %}
+                    <option value="{{ seller.id }}" {% if seller.id == assigned_id %}selected{% endif %}>
+                        {{ seller.username }} ({{ seller.role }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <button type="submit" id="confirmBtn"
+                class="px-6 py-2.5 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl transition flex items-center gap-2">
+            <i class="fas fa-check"></i> Confirmar e Importar {{ valid_leads | length }} leads
+        </button>
+    </div>
+</form>
+
+{# ── Tabela de preview ──────────────────────────────────────────────────────── #}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="font-semibold text-gray-800">
+            <i class="fas fa-list mr-2 text-blue-500"></i>
+            Leads que serão importados
+            <span class="ml-2 text-sm font-normal text-gray-400">({{ valid_leads | length }} registros)</span>
+        </h3>
+        <div class="flex gap-2 text-xs text-gray-500">
+            <span class="bg-gray-100 px-2 py-1 rounded">Role para ver todos</span>
+        </div>
+    </div>
+
+    <div class="overflow-x-auto max-h-[60vh] overflow-y-auto">
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50 sticky top-0 z-10">
+                <tr>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">#</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Empresa</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Cidade / UF</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Contato</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Telefone</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">E-mail</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Segmento / Indústria</th>
+                    <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Site</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+                {% for ld in valid_leads %}
+                <tr class="hover:bg-gray-50 transition-colors">
+                    <td class="px-4 py-3 text-gray-400 text-xs">{{ loop.index }}</td>
+                    <td class="px-4 py-3">
+                        <p class="font-medium text-gray-800">{{ ld.company_name }}</p>
+                        {% if ld.cnpj %}<p class="text-xs text-gray-400 font-mono">{{ ld.cnpj }}</p>{% endif %}
+                        {% if ld.address or ld.street %}
+                        <p class="text-xs text-gray-400">{{ ld.street or ld.address }}{% if ld.neighborhood %}, {{ ld.neighborhood }}{% endif %}</p>
+                        {% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-gray-600">
+                        {% if ld.city or ld.state %}
+                        {{ ld.city }}{% if ld.city and ld.state %}/{% endif %}{{ ld.state }}
+                        {% else %}<span class="text-gray-300">—</span>{% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-gray-600">
+                        {{ ld.contact_name or '' }}
+                        {% if not ld.contact_name %}<span class="text-gray-300">—</span>{% endif %}
+                    </td>
+                    <td class="px-4 py-3">
+                        {% if ld.contact_phone %}
+                            {% if ld._contact_phone_original %}
+                            <div class="flex flex-col gap-0.5">
+                                <span class="line-through text-gray-300 text-xs font-mono">{{ ld._contact_phone_original }}</span>
+                                <span class="text-purple-700 font-semibold text-xs font-mono flex items-center gap-1">
+                                    <i class="fas fa-robot text-purple-400 text-xs"></i>{{ ld.contact_phone }}
+                                </span>
+                            </div>
+                            {% else %}
+                            <p class="text-gray-700 text-xs">{{ ld.contact_phone }}</p>
+                            {% endif %}
+                        {% endif %}
+                        {% if ld.whatsapp %}
+                            {% if ld._whatsapp_original %}
+                            <div class="flex flex-col gap-0.5 mt-0.5">
+                                <span class="line-through text-gray-300 text-xs font-mono">{{ ld._whatsapp_original }}</span>
+                                <span class="text-purple-700 font-semibold text-xs font-mono flex items-center gap-1">
+                                    <i class="fab fa-whatsapp text-green-500 mr-1"></i><i class="fas fa-robot text-purple-400 text-xs"></i>{{ ld.whatsapp }}
+                                </span>
+                            </div>
+                            {% else %}
+                            <p class="text-green-600 text-xs"><i class="fab fa-whatsapp mr-1"></i>{{ ld.whatsapp }}</p>
+                            {% endif %}
+                        {% endif %}
+                        {% if not ld.contact_phone and not ld.whatsapp %}<span class="text-gray-300">—</span>{% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-gray-600 text-xs">
+                        {% if ld.contact_email %}
+                        <a href="mailto:{{ ld.contact_email }}" class="text-blue-600 hover:underline">{{ ld.contact_email }}</a>
+                        {% else %}<span class="text-gray-300">—</span>{% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-gray-600 text-xs max-w-xs">
+                        {% set ind = (ld.industry_type or ld.segment or '') %}
+                        {% if ind %}
+                        <span title="{{ ind }}">{{ ind[:60] }}{% if ind|length > 60 %}…{% endif %}</span>
+                        {% else %}<span class="text-gray-300">—</span>{% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-xs">
+                        {% if ld.website %}
+                        <a href="{{ ld.website }}" target="_blank" class="text-blue-500 hover:underline truncate block max-w-32">
+                            {{ ld.website | replace('https://','') | replace('http://','') | truncate(30) }}
+                        </a>
+                        {% else %}<span class="text-gray-300">—</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endif %}
+
+<script>
+document.getElementById('confirmForm')?.addEventListener('submit', function() {
+    const btn = document.getElementById('confirmBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Importando...';
+    }
+});
+</script>
+{% endblock %}
