@@ -185,12 +185,12 @@
         'Nenhuma mensagem nesta conversa.</div>';
     els.messages.scrollTop = els.messages.scrollHeight;
 
-    var podeEnviar = !!data.twilio_configurado;
+    var podeEnviar = !!data.pode_enviar;
     els.input.disabled = !podeEnviar;
     els.send.disabled = !podeEnviar;
     els.input.placeholder = podeEnviar
       ? 'Escreva a resposta e pressione Enter'
-      : 'Configure a Twilio para poder responder';
+      : 'Configure um canal de WhatsApp para poder responder';
 
     var m = data.motorista;
     els.context.innerHTML = m

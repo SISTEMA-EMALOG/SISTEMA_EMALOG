@@ -26,9 +26,10 @@ from infraestrutura_critica.models import (
     CONVERSATION_STATUS_PENDING,
     CONVERSATION_STATUS_RESOLVED,
 )
-from atendimento_conversas.utils import twilio_client
+from atendimento_conversas.utils import providers, twilio_client
 from atendimento_conversas.utils.conversas_service import (
     EVENTO_MENSAGEM,
+    assumir_conversa,
     avisar_conversa,
     get_or_create_conversation,
     mensagem_ja_processada,
@@ -60,9 +61,15 @@ def _forbidden():
 def index():
     if not _staff_only():
         return _forbidden()
+    canal = providers.canal_configurado()
+    evolution = providers.estado_evolution()
     return render_template(
         'conversas/index.html',
-        twilio_configurado=twilio_client.is_configured(),
+        canal_ativo=canal,
+        # A Evolution pode estar configurada mas com o WhatsApp desconectado.
+        # Nesse caso o envio falha, então a tela avisa antes.
+        evolution_conectada=(evolution.get('estado') == 'open'),
+        evolution_estado=evolution.get('estado'),
     )
 
 
@@ -294,7 +301,8 @@ def detalhe(conversa_id):
             'placa': driver.vehicle_plate,
             'validado': bool(driver.validated),
         } if driver else None,
-        'twilio_configurado': twilio_client.is_configured(),
+        'canal_ativo': providers.canal_configurado(),
+        'pode_enviar': providers.canal_configurado() is not None,
     })
 
 
@@ -314,9 +322,10 @@ def enviar(conversa_id):
             'error': f'A mensagem deve ter entre 1 e {LIMITE_MENSAGEM} caracteres.'
         }), 400
 
-    if not twilio_client.is_configured():
+    if providers.canal_configurado() is None:
         return jsonify({
-            'error': 'Twilio não configurada. Preencha as variáveis TWILIO_* no ambiente.'
+            'error': 'Nenhum canal de WhatsApp configurado. Configure a '
+                     'Evolution ou a Twilio no ambiente.'
         }), 503
 
     # A atribuição é respeitada, mas a fila e o lock são a Fase 2.
@@ -325,18 +334,24 @@ def enviar(conversa_id):
             and current_user.role != 'admin'):
         return jsonify({'error': 'Esta conversa está atribuída a outro atendente.'}), 409
 
+    canal = None
     try:
-        resultado = twilio_client.send_whatsapp(conversa.contact_phone, texto)
-        status = twilio_client.map_status(resultado.get('status'))
-        external_id = resultado.get('sid')
+        resultado = providers.enviar(conversa.contact_phone, texto)
+        canal = resultado.get('provider')
+        status = resultado.get('status') or 'enviado'
+        external_id = resultado.get('external_id')
         erro = None
-    except twilio_client.TwilioError as exc:
-        status, external_id, erro = 'erro', None, str(exc)
+    except providers.EnvioError as exc:
+        canal, status, external_id, erro = None, 'erro', None, str(exc)
         log.error(f"❌ Conversas: envio falhou na conversa {conversa.id}: {exc}")
 
     try:
         msg = registrar_saida(conversa, texto, autor_id=current_user.id,
                               external_id=external_id, status=status)
+        # Responder é assumir. Sem isto o EMA continuaria respondendo em
+        # paralelo ao atendente, na mesma conversa.
+        if erro is None:
+            assumir_conversa(conversa, current_user.id)
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
@@ -426,7 +441,7 @@ def status():
                 .filter(WhatsAppMessage.conversation_id.is_(None))
                 .count() if schema_ok else None
             ),
-            'twilio_configurado': twilio_client.is_configured(),
+            'canais': providers.diagnostico(),
             # URLs exatas para colar no console da Twilio. Geradas a partir
             # da requisição real, então já refletem o domínio e o HTTPS que o
             # balanceador entrega, que é justamente o que a Twilio assina.

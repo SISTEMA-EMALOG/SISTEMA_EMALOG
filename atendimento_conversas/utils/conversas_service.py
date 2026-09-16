@@ -99,6 +99,38 @@ def get_or_create_conversation(telefone_bruto, contact_name=None, driver=None):
     return conversa, True
 
 
+def assumir_conversa(conversa, usuario_id):
+    """
+    Passa a conversa para atendimento humano e CALA O BOT.
+
+    Sem isto, responder pela Central enquanto o motorista está em modo
+    automático faz o EMA responder também: duas vozes na mesma conversa,
+    para o mesmo motorista, sem ninguém perceber.
+
+    O EMA decide se fala lendo Driver.whatsapp_mode, não a conversa. Por
+    isso o modo é espelhado no cadastro do motorista, que é onde ele olha.
+    Ver prospeccao_captacao_motorista/ema_agent.py, no ponto em que checa
+    whatsapp_mode == 'manual' e marca a mensagem como processada sem
+    responder.
+
+    A atribuição definitiva, com disputa entre atendentes, é da Fase 2.
+    Aqui só se garante que quem respondeu primeiro fica como responsável.
+    """
+    if conversa is None:
+        return
+
+    conversa.handling_mode = 'manual'
+    if conversa.assigned_agent_id is None:
+        conversa.assigned_agent_id = usuario_id
+        conversa.assigned_at = datetime.utcnow()
+
+    driver = conversa.driver
+    if driver is not None:
+        driver.whatsapp_mode = 'manual'
+        if driver.whatsapp_assigned_to is None:
+            driver.whatsapp_assigned_to = conversa.assigned_agent_id
+
+
 def registrar_atividade(conversa, quando=None):
     """Atualiza o carimbo de atividade e reabre a conversa se estava resolvida."""
     if conversa is None:

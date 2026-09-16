@@ -38,12 +38,18 @@
 {% endblock %}
 
 {% block content %}
-{% if not twilio_configurado %}
+{% if not canal_ativo %}
 <div class="rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-900 mb-4" role="status">
   <i class="fas fa-triangle-exclamation mr-2" aria-hidden="true"></i>
-  A Twilio ainda não está configurada. As conversas aparecem, mas o envio fica bloqueado.
-  Preencha <strong>TWILIO_ACCOUNT_SID</strong>, <strong>TWILIO_AUTH_TOKEN</strong> e
-  <strong>TWILIO_WHATSAPP_NUMBER</strong> no ambiente.
+  Nenhum canal de WhatsApp configurado. As conversas aparecem, mas o envio fica
+  bloqueado. Configure a Evolution ou a Twilio no ambiente.
+</div>
+{% elif canal_ativo == 'evolution' and not evolution_conectada %}
+<div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 mb-4" role="status">
+  <i class="fas fa-plug-circle-xmark mr-2" aria-hidden="true"></i>
+  O WhatsApp da operação está <strong>{{ evolution_estado }}</strong>, não conectado.
+  As mensagens não vão sair até a instância voltar. Reconecte pela Central de
+  Contratação, em Sincronizar WhatsApp.
 </div>
 {% endif %}
 
@@ -120,5 +126,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/conversas.js', v='20260916-fase1') }}"></script>
+<script src="{{ url_for('static', filename='js/conversas.js', v='20260916-evolution') }}"></script>
 {% endblock %}
