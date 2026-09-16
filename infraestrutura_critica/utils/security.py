@@ -22,6 +22,8 @@ CSRF_EXEMPT_PREFIXES = (
     '/socket.io',
     '/ema/webhook',       # Evolution API — sem sessão de browser
     '/bids/webhook',      # Driver bid webhooks
+    '/conversas/webhook', # Twilio — POST server-to-server, autenticado pela
+                          # assinatura X-Twilio-Signature, não por sessão
 )
 
 def validate_csrf_token() -> None:

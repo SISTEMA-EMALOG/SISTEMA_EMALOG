@@ -428,6 +428,15 @@ def create_app():
             print(f"⚠️ Erro ao registrar contracting blueprint: {e}")
             import traceback; traceback.print_exc()
 
+        # Central de Atendimento (WhatsApp/Twilio) blueprint
+        try:
+            from atendimento_conversas.conversas import conversas_bp
+            app.register_blueprint(conversas_bp)
+            blueprints_registered.append('conversas')
+        except Exception as e:
+            print(f"⚠️ Erro ao registrar conversas blueprint: {e}")
+            import traceback; traceback.print_exc()
+
         # Demo Screenshots blueprint removido — routes/demo_screenshots.py não migrou
         # nesta reorganização; o próprio arquivo já indicava "REMOVER após concluir
         # a apresentação". Se ainda for necessário, reavaliar como módulo próprio.

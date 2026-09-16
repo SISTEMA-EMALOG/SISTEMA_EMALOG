@@ -62,12 +62,99 @@ def _get_db_columns(conn, table_name: str) -> set:
     return {row[0] for row in result}
 
 
+def _ensure_column_dual_dialect(engine, table_name: str, column_name: str,
+                                ddl_type: str) -> None:
+    """
+    Acrescenta uma coluna funcionando em SQLite E PostgreSQL. Idempotente.
+
+    Nunca levanta exceção: uma falha aqui não pode derrubar o boot da app.
+
+    Por que não usar o laço genérico de run_migrations: ele só roda depois do
+    gate de PostgreSQL e emite `ADD COLUMN IF NOT EXISTS`, que é erro de
+    sintaxe no SQLite. Aqui a existência é verificada pelo inspector do
+    SQLAlchemy, que é portável, e o ALTER sai sem o IF NOT EXISTS.
+
+    A coluna tem de ser NULLABLE. Acrescentar NOT NULL sem DEFAULT falha nos
+    dois bancos assim que a tabela tem linhas.
+    """
+    try:
+        inspector = sa_inspect(engine)
+        if table_name not in inspector.get_table_names():
+            log.warning(f"⚠️ Migration: tabela {table_name} não existe, coluna ignorada.")
+            return
+        existing = {c['name'] for c in inspector.get_columns(table_name)}
+    except Exception as exc:
+        log.warning(f"⚠️ Migration: não foi possível inspecionar {table_name}: {exc}")
+        return
+
+    if column_name in existing:
+        return
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {ddl_type}'
+            ))
+        log.info(f"🔧 Migration: +{table_name}.{column_name} ({ddl_type})")
+    except Exception as exc:
+        log.warning(f"⚠️ Migration: falha ao adicionar {table_name}.{column_name}: {exc}")
+
+
+def _ensure_index_dual_dialect(engine, label: str, ddl: str) -> None:
+    """Cria um índice nos dois bancos. Idempotente. Nunca levanta exceção."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(ddl))
+    except Exception as exc:
+        log.warning(f"⚠️ Migration índice {label}: {exc}")
+
+
+def _migrate_central_atendimento(engine) -> None:
+    """
+    Fase 0 da Central de Atendimento. Roda nos DOIS bancos.
+
+    Precisa vir ANTES do gate de PostgreSQL de run_migrations. Motivo: em
+    SQLite o db.create_all() cria a tabela nova `conversations`, mas nunca
+    acrescenta coluna nem índice a uma tabela que já existe. Sem este bloco,
+    whatsapp_messages ficaria sem conversation_id no banco de desenvolvimento
+    e o erro só apareceria em tempo de consulta, como
+    `OperationalError: no such column: conversation_id`.
+    """
+    _ensure_column_dual_dialect(
+        engine, 'whatsapp_messages', 'conversation_id', 'INTEGER'
+    )
+
+    _ensure_index_dual_dialect(
+        engine,
+        'whatsapp_messages.conversation_id',
+        'CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_conversation_id '
+        'ON whatsapp_messages (conversation_id)'
+    )
+
+    # Só pode existir UMA conversa não-resolvida por contato. Índice parcial
+    # único funciona com a mesma sintaxe em SQLite (>= 3.8) e PostgreSQL
+    # (>= 9.0). É esta garantia que impede o webhook de abrir duas conversas
+    # para o mesmo número em duas requisições concorrentes — não dá para
+    # confiar só na checagem em Python.
+    _ensure_index_dual_dialect(
+        engine,
+        'conversations.contact_phone (ativa)',
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversations_open_contact "
+        "ON conversations (contact_phone) WHERE status <> 'resolvida'"
+    )
+
+    log.info("✅ Migration Central de Atendimento (Fase 0) verificada.")
+
+
 def run_migrations(db) -> None:
     """
     Ponto de entrada principal.
     Deve ser chamado dentro de um app_context() após db.create_all().
     """
     engine = db.engine
+
+    # ── Central de Atendimento: roda nos DOIS bancos, antes do gate ─────────
+    _migrate_central_atendimento(engine)
 
     # Só faz sentido em PostgreSQL — SQLite é gerenciado pelo create_all
     if 'postgresql' not in str(engine.url):

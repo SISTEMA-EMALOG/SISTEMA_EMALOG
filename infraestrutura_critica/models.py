@@ -459,10 +459,17 @@ class WhatsAppMessage(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     external_message_id = db.Column(db.String(120), unique=True, index=True)
 
+    # Central de Atendimento (Fase 0). Nullable de propósito: a tabela já tem
+    # dados em produção e o auto-migrator gera ALTER TABLE ADD COLUMN sem
+    # DEFAULT para colunas NOT NULL, o que falha em tabela populada nos dois
+    # bancos — e o erro é engolido em log, deixando a coluna faltando.
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'))
+
     # Relationships
     freight = db.relationship('Freight', backref='whatsapp_messages')
     driver = db.relationship('Driver', backref='whatsapp_messages')
     creator = db.relationship('User', foreign_keys=[created_by], backref='whatsapp_messages')
+    conversation = db.relationship('Conversation', backref='messages')
 
 class ChatMessage(db.Model):
     __tablename__ = 'chat_messages'
@@ -763,3 +770,87 @@ class EmaSession(db.Model):
     abandoned_reason   = db.Column(db.String(200)) # motivo do abandono (inatividade/etc.)
 
     driver = db.relationship('Driver', backref='ema_sessions')
+
+
+# ── Central de Atendimento (atendimento_conversas) ───────────────────────────
+# Fase 0 do PLANO_DE_FASES.md. Agrupa as mensagens soltas de whatsapp_messages
+# em uma conversa por contato, com status, atendente atribuído e atividade.
+#
+# Não substitui EmaSession: aquela é a máquina de estados do bot de captação,
+# é obrigatoriamente ligada a um motorista já cadastrado (driver_id NOT NULL) e
+# não guarda mensagens. Conversation aceita número desconhecido e é o container
+# das mensagens.
+
+# Status possíveis de uma conversa.
+CONVERSATION_STATUS_OPEN     = 'aberta'
+CONVERSATION_STATUS_PENDING  = 'pendente'
+CONVERSATION_STATUS_RESOLVED = 'resolvida'
+
+CONVERSATION_STATUSES = (
+    CONVERSATION_STATUS_OPEN,
+    CONVERSATION_STATUS_PENDING,
+    CONVERSATION_STATUS_RESOLVED,
+)
+
+# Uma conversa não-resolvida é a "ativa" daquele contato. Só pode haver uma,
+# garantido por índice parcial único no banco (ver utils/migrations.py).
+CONVERSATION_ACTIVE_STATUSES = (
+    CONVERSATION_STATUS_OPEN,
+    CONVERSATION_STATUS_PENDING,
+)
+
+
+class Conversation(db.Model):
+    """Uma conversa de WhatsApp com um contato, atendida por um operador."""
+    __tablename__ = 'conversations'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Chave do contato: dígitos em E.164 sem o '+', ex. '5511999998888'.
+    # 32 de largura porque o valor cru da Twilio ('whatsapp:+55...') tem 23
+    # caracteres e phone_number em whatsapp_messages só tem 20 — normalizar
+    # antes de gravar (atendimento_conversas/utils/phone.py).
+    contact_phone = db.Column(db.String(32), nullable=False, index=True)
+    contact_name  = db.Column(db.String(120))
+
+    # Nullable: número desconhecido abre conversa antes de existir motorista.
+    # A exclusão de motorista zera esta coluna, nunca apaga a conversa.
+    driver_id = db.Column(db.Integer, db.ForeignKey('drivers.id'))
+
+    # aberta / pendente / resolvida
+    status = db.Column(db.String(20), default=CONVERSATION_STATUS_OPEN,
+                       server_default=db.text("'aberta'"), nullable=False, index=True)
+
+    # Atribuição. Fonte de verdade da Fase 2; Driver.whatsapp_assigned_to passa
+    # a ser cópia legada (mantida em sincronia, nunca lida como verdade).
+    assigned_agent_id = db.Column(db.Integer, db.ForeignKey('users.id'), index=True)
+    assigned_at       = db.Column(db.DateTime)
+
+    # bot / humano — espelha Driver.whatsapp_mode ('auto'/'manual') por contato.
+    handling_mode = db.Column(db.String(10), default='auto',
+                              server_default=db.text("'auto'"), nullable=False)
+
+    # NOT NULL de propósito. A fila da Fase 2 ordena por esta coluna, e nulo
+    # ordena diferente nos dois bancos: em ORDER BY ... DESC o PostgreSQL põe
+    # NULL primeiro e o SQLite põe por último. Sem nulo, não há divergência.
+    # Registro de origem desconhecida recebe a época (1970), que afunda na
+    # ordenação nos dois dialetos.
+    last_activity_at = db.Column(db.DateTime, nullable=False,
+                                 default=datetime.utcnow,
+                                 server_default=db.text('CURRENT_TIMESTAMP'),
+                                 index=True)
+    resolved_at      = db.Column(db.DateTime)
+    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at       = db.Column(db.DateTime, default=datetime.utcnow,
+                                 onupdate=datetime.utcnow)
+
+    driver = db.relationship('Driver', backref='conversations')
+    assigned_agent = db.relationship('User', foreign_keys=[assigned_agent_id],
+                                     backref='assigned_conversations')
+
+    @property
+    def is_active(self):
+        return self.status in CONVERSATION_ACTIVE_STATUSES
+
+    def __repr__(self):
+        return f'<Conversation {self.id} {self.contact_phone} {self.status}>'
