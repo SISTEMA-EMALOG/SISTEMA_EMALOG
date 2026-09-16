@@ -12,7 +12,7 @@ import logging
 import os
 from datetime import datetime
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import func, or_, inspect as sa_inspect
 
@@ -427,8 +427,11 @@ def status():
                 .count() if schema_ok else None
             ),
             'twilio_configurado': twilio_client.is_configured(),
-            'webhook_url': twilio_client.webhook_url(request).replace(
-                '/api/status', '/webhook'),
+            # URLs exatas para colar no console da Twilio. Geradas a partir
+            # da requisição real, então já refletem o domínio e o HTTPS que o
+            # balanceador entrega, que é justamente o que a Twilio assina.
+            'webhook_entrada': url_for('conversas.webhook', _external=True),
+            'webhook_status': url_for('conversas.webhook_status', _external=True),
         })
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 500
