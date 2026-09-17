@@ -181,12 +181,15 @@
 
   function renderLista(conversas) {
     if (!conversas.length) {
-      var vazio = {
-        fila: 'Ninguém esperando atendimento.',
-        minhas: 'Você não está com nenhuma conversa.',
-        ativas: 'Nenhuma conversa ativa.',
-        resolvidas: 'Nenhuma conversa resolvida.'
-      }[state.aba] || 'Nenhuma conversa aqui.';
+      var vazio = state.busca
+        ? 'Nada encontrado para essa busca nesta aba.'
+        : ({
+            fila: 'Ninguém esperando atendimento.',
+            minhas: 'Você não está com nenhuma conversa.',
+            ativas: 'Nenhuma conversa ativa.',
+            resolvidas: 'Nenhuma conversa resolvida.',
+            todas: 'Nenhuma conversa ainda.'
+          }[state.aba] || 'Nenhuma conversa aqui.');
       els.items.innerHTML =
         '<div class="p-6 text-center text-gray-400">' +
         '<i class="fas fa-inbox text-2xl mb-2" aria-hidden="true"></i>' +
@@ -195,8 +198,13 @@
     }
     els.items.innerHTML = conversas.map(function (c) {
       var ativo = state.atual === c.id ? ' is-active' : '';
+      // Vermelho só quando a espera é de gente: conversa sua, ou livre fora
+      // do EMA. Conversa que o bot conduz mostra o número em cinza.
+      var humana = c.assigned_agent_id === EU || (!c.assigned_agent_id && c.handling_mode === 'manual');
       var badge = c.nao_lidas > 0
-        ? '<span class="ml-2 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-xs font-bold">' +
+        ? '<span class="ml-2 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full ' +
+          (humana ? 'bg-red-500 text-white' : 'bg-gray-200 text-gray-600') + ' text-xs font-bold" ' +
+          'title="' + c.nao_lidas + ' não lida(s)">' +
           (c.nao_lidas > 9 ? '9+' : c.nao_lidas) + '</span>'
         : '';
       return '' +
@@ -218,6 +226,8 @@
 
   async function abrir(id, silencioso) {
     state.atual = id;
+    // O alerta global não apita para a conversa que está aberta e visível.
+    window.EmalogConversaAberta = id;
     esconderTransferencia();
     if (!silencioso) {
       els.messages.innerHTML = '<div class="p-4 space-y-3">' +
@@ -231,6 +241,8 @@
       state.detalhe = res.corpo;
       renderThread(res.corpo);
       agendarLista();
+      // Abrir pode ter marcado mensagens como lidas: o badge do menu muda.
+      if (window.EmalogAlertaConversas) window.EmalogAlertaConversas.atualizar();
     } catch (e) {
       aviso(e.message || 'Não foi possível abrir a conversa.');
     }
@@ -272,7 +284,7 @@
       ? msgs.map(function (m) {
           var saida = m.direction === 'outbound';
           return '<div class="' + (saida ? 'msg-out' : 'msg-in') + '">' +
-            esc(m.texto) +
+            esc(m.texto) + renderAnexos(m.anexos) +
             '<div class="text-[10px] mt-1 ' + (saida ? 'text-gray-300' : 'text-gray-400') + '">' +
               esc(hora(m.timestamp)) + (saida ? ' · ' + esc(m.status) : '') +
             '</div></div>';
@@ -297,6 +309,32 @@
     }
 
     renderContexto(data);
+  }
+
+  var TEXTO_ANEXO = {
+    pendente: 'Anexo sendo guardado…',
+    indisponivel: 'Anexo recebido, mas o armazenamento de arquivos não está configurado.',
+    bloqueado: 'Anexo recusado',
+    erro: 'Não foi possível guardar o anexo'
+  };
+
+  function renderAnexos(lista) {
+    return (lista || []).map(function (a) {
+      var url = '/conversas/api/anexos/' + encodeURIComponent(String(a.id));
+      if (a.status === 'armazenado' && a.imagem) {
+        return '<a href="' + url + '" target="_blank" rel="noopener" class="block mt-2">' +
+          '<img src="' + url + '" alt="Imagem recebida" loading="lazy" ' +
+          'class="max-h-56 max-w-full rounded-lg border border-gray-200"></a>';
+      }
+      if (a.status === 'armazenado') {
+        return '<a href="' + url + '" target="_blank" rel="noopener" ' +
+          'class="mt-2 inline-flex items-center gap-2 text-xs font-bold underline">' +
+          '<i class="fas fa-file-pdf" aria-hidden="true"></i> ' + esc(a.nome || 'Abrir PDF') + '</a>';
+      }
+      return '<div class="mt-2 text-xs italic opacity-80">' +
+        '<i class="fas fa-paperclip" aria-hidden="true"></i> ' + esc(TEXTO_ANEXO[a.status] || a.status) +
+        (a.motivo && a.status !== 'indisponivel' ? ': ' + esc(a.motivo) : '') + '</div>';
+    }).join('');
   }
 
   function botao(acao, rotulo, classes) {
@@ -537,6 +575,51 @@
     });
     carregarLista();
   });
+
+  // ── Som e avisos do navegador ──────────────────────────────────────────
+  var btnSom = $('#convSom');
+  var btnNotif = $('#convNotif');
+
+  function pintarSom() {
+    var alerta = window.EmalogAlertaConversas;
+    if (!btnSom || !alerta) return;
+    var ligado = alerta.somLigado();
+    btnSom.setAttribute('aria-pressed', ligado ? 'true' : 'false');
+    btnSom.innerHTML = '<i class="fas ' + (ligado ? 'fa-volume-high' : 'fa-volume-xmark') +
+      '" aria-hidden="true"></i><span>' + (ligado ? 'Som ligado' : 'Som desligado') + '</span>';
+  }
+
+  function pintarNotif() {
+    var alerta = window.EmalogAlertaConversas;
+    if (!btnNotif || !alerta) return;
+    // Só oferece enquanto a permissão ainda não foi decidida.
+    btnNotif.classList.toggle('hidden',
+      !alerta.notificacoesSuportadas() || alerta.permissaoNotificacoes() !== 'default');
+  }
+
+  if (btnSom) {
+    btnSom.addEventListener('click', function () {
+      var alerta = window.EmalogAlertaConversas;
+      if (!alerta) return;
+      var ligar = !alerta.somLigado();
+      alerta.definirSom(ligar);
+      if (ligar) alerta.tocarTeste();
+      pintarSom();
+    });
+  }
+  if (btnNotif) {
+    btnNotif.addEventListener('click', function () {
+      var alerta = window.EmalogAlertaConversas;
+      if (!alerta) return;
+      alerta.pedirPermissao().then(function (r) {
+        aviso(r === 'granted' ? 'Avisos do navegador ativados.' : 'Avisos do navegador não foram permitidos.',
+              r === 'granted' ? 'success' : 'info');
+        pintarNotif();
+      });
+    });
+  }
+  pintarSom();
+  pintarNotif();
 
   // window.socket pode ainda não existir: notifications.js só instancia no
   // DOMContentLoaded. Liga nos dois caminhos, como static/js/contracting.js.

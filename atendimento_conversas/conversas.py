@@ -10,26 +10,30 @@ modelos e utilitários compartilhados vêm de infraestrutura_critica/.
 """
 
 import logging
+import re
 from datetime import datetime
 from types import SimpleNamespace
 
-from flask import Blueprint, jsonify, render_template, request, url_for
+from flask import Blueprint, Response, jsonify, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import func, or_, inspect as sa_inspect
 
 from infraestrutura_critica.app import db
 from infraestrutura_critica.models import (
     Conversation,
+    Driver,
+    MessageAttachment,
     WhatsAppMessage,
+    ANEXO_ARMAZENADO,
     CONVERSATION_ACTIVE_STATUSES,
     CONVERSATION_STATUS_OPEN,
     CONVERSATION_STATUS_RESOLVED,
 )
-from atendimento_conversas.utils import fila, providers, twilio_client
+from atendimento_conversas.utils import anexos, eventos_mensagem, fila, providers, twilio_client
 from atendimento_conversas.utils.conversas_service import (
-    EVENTO_MENSAGEM,
     avisar_conversa,
     conversa_para_entrada,
+    marcar_lidas,
     mensagem_ja_processada,
     registrar_entrada,
     registrar_saida,
@@ -40,6 +44,10 @@ from atendimento_conversas.utils.conversas_service import (
 log = logging.getLogger(__name__)
 
 conversas_bp = Blueprint('conversas', __name__, url_prefix='/conversas')
+
+# Vínculo automático de mensagem à conversa e aviso em tempo real para
+# qualquer mensagem gravada, por qualquer caminho. Ver utils/eventos_mensagem.py.
+eventos_mensagem.registrar()
 
 LIMITE_MENSAGEM = 2000
 ABAS = ('fila', 'minhas', 'ativas', 'resolvidas', 'todas')
@@ -167,11 +175,20 @@ def webhook():
 
         texto = dados['body']
         if not texto and dados['num_media']:
-            # Anexos entram na Fase 3. Por ora registra que chegou algo.
-            texto = f"[{dados['num_media']} anexo(s) recebido(s)]"
+            texto = f"[{dados['num_media']} anexo(s)]"
 
         msg = registrar_entrada(conversa, texto, external_id=external_id,
                                 source='twilio')
+        # Anexos entram como pendentes NA MESMA transação da mensagem: se o
+        # processo cair antes do download, ficam registrados em vez de sumir.
+        pendentes = [
+            anexos.registrar_pendente(msg, 'twilio', m['url'], content_type=m['content_type'])
+            for m in dados['media']
+        ]
+        db.session.flush()
+        # Retrato antes do commit: o download acontece sem transação aberta.
+        a_processar = [(a.id, a.provider_ref) for a in pendentes]
+        conversa_id = conversa.id
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
@@ -180,8 +197,11 @@ def webhook():
         # 500 faz a Twilio reentregar, o que é o comportamento desejado.
         return jsonify({'error': 'Falha ao processar'}), 500
 
-    avisar_conversa(conversa, extra={'nova_mensagem': True})
-    avisar_conversa(conversa, evento=EVENTO_MENSAGEM, extra={'message_id': msg.id})
+    # O aviso de mensagem nova sai sozinho no commit (utils/eventos_mensagem.py).
+    for anexo_id, url in a_processar:
+        anexos.processar(anexo_id, conversa_id, lambda u=url: anexos.baixar_da_twilio(u))
+    if a_processar:
+        avisar_conversa(db.session.get(Conversation, conversa_id), extra={'acao': 'anexo'})
     return _resposta_twiml()
 
 
@@ -223,6 +243,28 @@ def _filtro_ativa():
     return Conversation.status.in_(CONVERSATION_ACTIVE_STATUSES)
 
 
+def _filtro_busca(busca):
+    """
+    Busca por nome ou telefone, em qualquer formato que o atendente digitar.
+
+    O telefone da conversa é guardado só em dígitos, com código de país.
+    Quem digita '(11) 98888-7777' procuraria o texto com parênteses e não
+    acharia nada; por isso os dígitos são extraídos e comparados à parte.
+
+    O nome é procurado no nome do contato e no cadastro do motorista. EXISTS
+    via has(), e não join, para não duplicar linhas. Tudo portável.
+    """
+    like = f'%{busca}%'
+    condicoes = [
+        Conversation.contact_name.ilike(like),
+        Conversation.driver.has(Driver.name.ilike(like)),
+    ]
+    digitos = re.sub(r'\D', '', busca)
+    if len(digitos) >= 3:
+        condicoes.append(Conversation.contact_phone.like(f'%{digitos}%'))
+    return or_(*condicoes)
+
+
 @conversas_bp.route('/api/conversas')
 @login_required
 def listar():
@@ -251,11 +293,7 @@ def listar():
         q = q.filter(Conversation.status == CONVERSATION_STATUS_RESOLVED)
 
     if busca:
-        like = f'%{busca}%'
-        q = q.filter(or_(
-            Conversation.contact_phone.like(like),
-            Conversation.contact_name.ilike(like),
-        ))
+        q = q.filter(_filtro_busca(busca))
 
     contagens = {
         'fila': Conversation.query.filter(
@@ -275,7 +313,7 @@ def listar():
         db.session.query(WhatsAppMessage.conversation_id, func.count(WhatsAppMessage.id))
         .filter(WhatsAppMessage.conversation_id.in_(ids))
         .filter(WhatsAppMessage.direction == 'inbound')
-        .filter(WhatsAppMessage.status != 'lido')
+        .filter(WhatsAppMessage.read_at.is_(None))
         .group_by(WhatsAppMessage.conversation_id)
         .all()
     )
@@ -335,14 +373,22 @@ def detalhe(conversa_id):
                  .order_by(WhatsAppMessage.sent_at.asc(), WhatsAppMessage.id.asc())
                  .all())
 
-    marcou = False
-    for msg in mensagens:
-        if msg.direction == 'inbound' and msg.status != 'lido':
-            msg.status = 'lido'
-            marcou = True
-    if marcou:
+    anexos_por_msg = {}
+    if mensagens:
+        for a in (MessageAttachment.query
+                  .filter(MessageAttachment.message_id.in_([m.id for m in mensagens]))
+                  .order_by(MessageAttachment.id).all()):
+            anexos_por_msg.setdefault(a.message_id, []).append(anexos.serializar(a))
+
+    # Leitura: só o responsável marca. Um colega espiando uma conversa da
+    # fila não pode apagar o sinal de que tem gente esperando atendimento.
+    # E marca só o que esta resposta exibe, por id.
+    nao_lidas = [m.id for m in mensagens if m.direction == 'inbound' and m.read_at is None]
+    if nao_lidas and conversa.assigned_agent_id == eu:
         try:
+            marcar_lidas(conversa.id, nao_lidas)
             db.session.commit()
+            nao_lidas = []
         except Exception as exc:
             db.session.rollback()
             log.warning(f"⚠️ Conversas: falha ao marcar como lidas: {exc}")
@@ -350,8 +396,9 @@ def detalhe(conversa_id):
     canal_ok = providers.canal_configurado() is not None
     driver = conversa.driver
     return jsonify({
-        'conversa': serializar_conversa(conversa, 0, mensagens[-1] if mensagens else None),
-        'mensagens': [serializar_mensagem(m) for m in mensagens],
+        'conversa': serializar_conversa(conversa, len(nao_lidas),
+                                        mensagens[-1] if mensagens else None),
+        'mensagens': [serializar_mensagem(m, anexos_por_msg.get(m.id)) for m in mensagens],
         'motorista': {
             'id': driver.id,
             'nome': driver.name,
@@ -517,12 +564,84 @@ def enviar(conversa_id):
         return jsonify({'ok': False,
                         'error': 'Mensagem enviada, mas não foi possível registrá-la.'}), 500
 
-    avisar_conversa(db.session.get(Conversation, conversa_id),
-                    extra={'message_id': msg.id})
+    # O aviso da mensagem enviada sai sozinho no commit (utils/eventos_mensagem.py).
 
     if erro:
         return jsonify({'ok': False, 'error': erro, 'message_id': msg.id}), 502
     return jsonify({'ok': True, 'mensagem': serializar_mensagem(msg)})
+
+
+@conversas_bp.route('/api/contadores')
+@login_required
+def contadores():
+    """
+    Números para o alerta global: o badge do menu e o título da aba.
+
+    fila_humana conta conversas livres que precisam de gente, isto é, fora do
+    EMA. Conversas que o bot está conduzindo não entram no alerta: seriam
+    ruído constante para quem está em outra tela.
+    """
+    if not _staff_only():
+        return _forbidden()
+    eu = current_user.id
+
+    fila_humana = Conversation.query.filter(
+        _filtro_ativa(), Conversation.assigned_agent_id.is_(None),
+        Conversation.handling_mode == fila.MODO_HUMANO).count()
+
+    minhas_com_nao_lidas = (
+        db.session.query(func.count(func.distinct(WhatsAppMessage.conversation_id)))
+        .join(Conversation, Conversation.id == WhatsAppMessage.conversation_id)
+        .filter(_filtro_ativa(), Conversation.assigned_agent_id == eu,
+                WhatsAppMessage.direction == 'inbound', WhatsAppMessage.read_at.is_(None))
+        .scalar() or 0
+    )
+
+    return jsonify({
+        'fila_humana': fila_humana,
+        'minhas_com_nao_lidas': minhas_com_nao_lidas,
+        'alerta': fila_humana + minhas_com_nao_lidas,
+    })
+
+
+@conversas_bp.route('/api/anexos/<int:anexo_id>')
+@login_required
+def ver_anexo(anexo_id):
+    """
+    Entrega o arquivo de um anexo, lido do S3 pelo servidor.
+
+    Passa pelo servidor em vez de redirecionar para uma URL assinada do S3
+    por três motivos: o bucket continua privado, a permissão é conferida a
+    cada acesso, e a política de segurança de conteúdo da app não precisa
+    liberar o domínio do S3 para imagens.
+
+    O tipo servido é o detectado pelos bytes na chegada, nunca o declarado
+    pelo remetente, com nosniff e sandbox: um PDF não executa nada na origem
+    da aplicação.
+    """
+    if not _staff_only():
+        return _forbidden()
+
+    anexo = db.session.get(MessageAttachment, anexo_id)
+    if anexo is None or anexo.status != ANEXO_ARMAZENADO or not anexo.storage_key:
+        return jsonify({'error': 'Anexo indisponível.'}), 404
+    chave, tipo = anexo.storage_key, anexo.content_type
+    # Encerra a leitura antes de ir à rede.
+    db.session.rollback()
+
+    try:
+        dados = anexos.ler_do_s3(chave)
+    except Exception as exc:
+        log.error(f"❌ Anexos: falha ao ler anexo {anexo_id} do S3: {exc}")
+        return jsonify({'error': 'Não foi possível ler o anexo.'}), 502
+
+    extensao = anexos.EXTENSOES.get(tipo, '')
+    return Response(dados, mimetype=tipo, headers={
+        'Content-Disposition': f'inline; filename="anexo-{anexo_id}{extensao}"',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': 'sandbox',
+        'Cache-Control': 'private, max-age=300',
+    })
 
 
 @conversas_bp.route('/api/conversas/<int:conversa_id>/eventos')
@@ -563,7 +682,9 @@ def diagnostico():
 
         tem_tabela = 'conversations' in tabelas
         tem_coluna = 'conversation_id' in colunas_wa
-        schema_ok = tem_tabela and tem_coluna and 'conversation_events' in tabelas
+        schema_ok = (tem_tabela and tem_coluna and 'read_at' in colunas_wa
+                     and 'conversation_events' in tabelas
+                     and 'message_attachments' in tabelas)
 
         return jsonify({
             'success': True,
@@ -571,7 +692,10 @@ def diagnostico():
             'schema_ok': schema_ok,
             'tabela_conversations': tem_tabela,
             'tabela_conversation_events': 'conversation_events' in tabelas,
+            'tabela_message_attachments': 'message_attachments' in tabelas,
             'coluna_conversation_id': tem_coluna,
+            'coluna_read_at': 'read_at' in colunas_wa,
+            's3_configurado': anexos.s3_configurado(),
             'indice_conversation_id': 'idx_whatsapp_messages_conversation_id' in indices,
             'indice_conversa_ativa': 'uq_conversations_open_contact' in indices,
             'total_conversas': Conversation.query.count() if tem_tabela else None,

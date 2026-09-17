@@ -364,18 +364,41 @@ def _process_single_message(msg_data: dict):
         status='recebido', external_message_id=external_id,
         conversation_id=conversa.id if conversa is not None else None,
     )
+    anexo_pendente = None
     if not existing_inbound:
         db.session.add(inbound)
+        if media_path:
+            # Central de Atendimento: a mídia vira anexo pendente NA MESMA
+            # transação da mensagem, para não se perder se o processo cair.
+            from atendimento_conversas.utils import anexos as _anexos
+            _info = (message_obj.get(message_type) or {}) if isinstance(message_obj, dict) else {}
+            anexo_pendente = _anexos.registrar_pendente(
+                inbound, 'evolution',
+                {'id': external_id, 'remoteJid': remote_jid, 'messageType': message_type},
+                content_type=_info.get('mimetype'), nome=_info.get('fileName'),
+            )
     elif existing_inbound.conversation_id is None and conversa is not None:
         existing_inbound.conversation_id = conversa.id
     # Reserve the provider message ID before any AI/external side effect. A
     # concurrent redelivery is stopped by the unique index at this flush.
     db.session.flush()
+    anexo_id = anexo_pendente.id if anexo_pendente is not None else None
+    conversa_id_anexo = conversa.id if conversa is not None else None
     db.session.commit()
     inbound = WhatsAppMessage.query.filter_by(id=inbound.id).with_for_update().one()
     inbound.status = 'processando'
     inbound.response_at = datetime.utcnow()
     db.session.commit()
+
+    if anexo_id is not None:
+        # Depois dos commits, sem transação aberta: a gravação no S3 é rede.
+        # Só LÊ o arquivo temporário; process_message ainda o usa adiante.
+        from atendimento_conversas.utils import anexos as _anexos
+        _anexos.processar(anexo_id, conversa_id_anexo,
+                          lambda: _anexos.ler_arquivo_local_temporario(media_path))
+        if conversa is not None:
+            from atendimento_conversas.utils.conversas_service import avisar_conversa
+            avisar_conversa(conversa, extra={'acao': 'anexo'})
 
     # Humano no controle: o bot se cala. A conversa é a autoridade da Central
     # de Atendimento; o cadastro do motorista é o espelho que o restante do
@@ -392,9 +415,8 @@ def _process_single_message(msg_data: dict):
             socketio.emit('contracting_conversation_update', {
                 'driver_id': driver_for_message.id
             }, room='operators')
-        if conversa is not None:
-            from atendimento_conversas.utils.conversas_service import avisar_conversa
-            avisar_conversa(conversa, extra={'nova_mensagem': True})
+        # O aviso de mensagem nova para a Central já saiu no commit da
+        # mensagem (atendimento_conversas/utils/eventos_mensagem.py).
         return
 
     if ema_session and active_bid:

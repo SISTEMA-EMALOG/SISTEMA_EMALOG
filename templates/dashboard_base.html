@@ -387,6 +387,10 @@
     <!-- Notifications system -->
     <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% if current_user.is_authenticated and current_user.role in ['admin', 'operador', 'vendedor'] %}
+    <!-- Central de Atendimento: alerta de mensagem nova em qualquer tela -->
+    <script src="{{ url_for('static', filename='js/conversas_alerta.js', v='20260917-fase3') }}"></script>
+    {% endif %}
 
     <!-- CSRF auto-inject: adds token to all forms and AJAX requests -->
     <script>

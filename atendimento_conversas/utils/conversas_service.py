@@ -11,7 +11,7 @@ disputas no banco.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
@@ -37,6 +37,10 @@ SALA_OPERADORES = 'operators'
 
 EVENTO_CONVERSA = 'conversa_atualizada'
 EVENTO_MENSAGEM = 'conversa_mensagem'
+
+# Mensagens enviadas antes de a conversa existir, e que entram nela quando o
+# motorista responde. Ver _vincular_saidas_recentes.
+DIAS_CONTEXTO_SAIDA = 7
 
 # Voltas de conversa_para_entrada. Cada volta só se repete se a conversa foi
 # resolvida entre a leitura e a gravação, o que exige um clique humano no
@@ -108,7 +112,39 @@ def get_or_create_conversation(telefone_bruto, contact_name=None, driver=None):
             return None, False
         return conversa, False
 
+    if conversa.driver_id:
+        _vincular_saidas_recentes(conversa.id, conversa.driver_id)
+
     return conversa, True
+
+
+def _vincular_saidas_recentes(conversa_id, driver_id):
+    """
+    Traz para a conversa recém-aberta as mensagens enviadas ao motorista nos
+    últimos dias que ainda não tinham conversa.
+
+    Caso típico: uma oferta de frete sai para cem motoristas, sem conversa,
+    para não encher a fila. Um deles responde e abre a conversa. Sem isto, o
+    atendente veria a resposta sem saber a que oferta ela se refere.
+
+    Dentro de SAVEPOINT: no PostgreSQL, um comando que falha aborta a
+    transação inteira, e uma falha aqui não pode perder a mensagem recebida.
+    Só toca whatsapp_messages, que não entra na ordem de lock da fila.
+    """
+    limite = datetime.utcnow() - timedelta(days=DIAS_CONTEXTO_SAIDA)
+    try:
+        with db.session.begin_nested():
+            db.session.execute(
+                update(WhatsAppMessage)
+                .where(WhatsAppMessage.conversation_id.is_(None),
+                       WhatsAppMessage.driver_id == driver_id,
+                       WhatsAppMessage.direction == 'outbound',
+                       WhatsAppMessage.sent_at >= limite)
+                .values(conversation_id=conversa_id)
+                .execution_options(synchronize_session=False)
+            )
+    except Exception as exc:
+        log.warning(f"⚠️ Conversas: falha ao vincular mensagens anteriores: {exc}")
 
 
 def _tocar(conversa_id, quando):
@@ -255,7 +291,7 @@ def serializar_conversa(conversa, nao_lidas=None, ultima=None):
     }
 
 
-def serializar_mensagem(msg):
+def serializar_mensagem(msg, anexos=None):
     """Uma mensagem para a thread."""
     return {
         'id': msg.id,
@@ -265,7 +301,33 @@ def serializar_mensagem(msg):
         'source': msg.source,
         'autor_id': msg.created_by,
         'timestamp': _iso(msg.sent_at),
+        'lida': msg.read_at is not None if msg.direction == 'inbound' else None,
+        'anexos': anexos or [],
     }
+
+
+# ── Leitura ──────────────────────────────────────────────────────────────────
+
+def marcar_lidas(conversa_id, ids_exibidos):
+    """
+    Marca como lidas as mensagens recebidas que a tela EXIBIU. Sem commit.
+
+    Por lista de ids, e não "tudo até agora": uma mensagem que chegou durante
+    o carregamento da tela não foi vista, e não pode ser marcada.
+
+    Grava read_at, nunca status. Ver models.WhatsAppMessage.read_at.
+    """
+    if not ids_exibidos:
+        return 0
+    return db.session.execute(
+        update(WhatsAppMessage)
+        .where(WhatsAppMessage.id.in_(list(ids_exibidos)),
+               WhatsAppMessage.conversation_id == conversa_id,
+               WhatsAppMessage.direction == 'inbound',
+               WhatsAppMessage.read_at.is_(None))
+        .values(read_at=datetime.utcnow())
+        .execution_options(synchronize_session=False)
+    ).rowcount
 
 
 # ── Tempo real ───────────────────────────────────────────────────────────────

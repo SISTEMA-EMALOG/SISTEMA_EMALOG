@@ -34,6 +34,16 @@
 {% endblock %}
 
 {% block header_actions %}
+<button type="button" id="convSom"
+        class="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold"
+        aria-pressed="true" title="Ligar ou desligar o som de mensagem nova">
+  <i class="fas fa-volume-high" aria-hidden="true"></i><span>Som</span>
+</button>
+<button type="button" id="convNotif"
+        class="hidden inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold"
+        title="Receber aviso do navegador quando esta aba estiver em segundo plano">
+  <i class="fas fa-bell" aria-hidden="true"></i><span>Ativar avisos</span>
+</button>
 <button type="button" id="convRefresh"
         class="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold">
   <i class="fas fa-sync-alt" aria-hidden="true"></i><span>Atualizar</span>
@@ -70,12 +80,13 @@
       </button>
       <button type="button" class="conv-tab px-3 py-2.5 text-xs font-bold text-gray-600" data-aba="ativas">Ativas</button>
       <button type="button" class="conv-tab px-3 py-2.5 text-xs font-bold text-gray-600" data-aba="resolvidas">Resolvidas</button>
+      <button type="button" class="conv-tab px-3 py-2.5 text-xs font-bold text-gray-600" data-aba="todas">Todas</button>
     </nav>
     <div class="p-3 border-b border-gray-100 flex-shrink-0">
       <label for="convSearch" class="sr-only">Buscar conversa</label>
       <div class="relative">
         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" aria-hidden="true"></i>
-        <input id="convSearch" type="search" placeholder="Buscar por nome ou telefone"
+        <input id="convSearch" type="search" placeholder="Nome, motorista ou telefone, em qualquer formato"
                class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm">
       </div>
     </div>
@@ -140,5 +151,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/conversas.js', v='20260917-fase2') }}"></script>
+<script src="{{ url_for('static', filename='js/conversas.js', v='20260917-fase3') }}"></script>
 {% endblock %}

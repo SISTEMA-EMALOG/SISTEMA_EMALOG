@@ -86,7 +86,7 @@ def create_app():
         # frame-src inclui a instância do Chatwoot (aba Conversas embutida via iframe)
         chatwoot_origin = os.environ.get('CHATWOOT_URL', '').rstrip('/')
         frame_src = f"frame-src 'self' {chatwoot_origin};".strip()
-        response.headers['Content-Security-Policy'] = (
+        politica = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' cdn.tailwindcss.com cdnjs.cloudflare.com cdn.jsdelivr.net unpkg.com; "
             "style-src 'self' 'unsafe-inline' cdn.tailwindcss.com cdnjs.cloudflare.com fonts.googleapis.com unpkg.com; "
@@ -96,6 +96,14 @@ def create_app():
             f"{frame_src} "
             "frame-ancestors 'self';"
         )
+        if 'Content-Security-Policy' in response.headers:
+            # A rota já declarou uma política própria, por exemplo 'sandbox'
+            # no anexo servido pela Central de Atendimento. Sobrescrever a
+            # apagaria. Com duas políticas o navegador aplica ambas, então a
+            # global entra como segunda, sem afrouxar nenhuma das duas.
+            response.headers.add('Content-Security-Policy', politica)
+        else:
+            response.headers['Content-Security-Policy'] = politica
         return response
 
     # ── CSRF protection ───────────────────────────────────────────────────────

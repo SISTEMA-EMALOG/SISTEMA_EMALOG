@@ -465,6 +465,16 @@ class WhatsAppMessage(db.Model):
     # bancos — e o erro é engolido em log, deixando a coluna faltando.
     conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'))
 
+    # Central de Atendimento (Fase 3): quando o RESPONSÁVEL pela conversa leu
+    # esta mensagem recebida. Nulo significa não lida.
+    #
+    # Coluna própria, e não status='lido', por um defeito real: o webhook do
+    # EMA usa status='processado' para ignorar reentrega da Evolution. Gravar
+    # 'lido' por cima fazia uma reentrega ser processada de novo, e o bot
+    # respondia duas vezes ao motorista. status pertence ao ciclo de entrega
+    # e processamento; leitura humana mora aqui.
+    read_at = db.Column(db.DateTime)
+
     # Relationships
     freight = db.relationship('Freight', backref='whatsapp_messages')
     driver = db.relationship('Driver', backref='whatsapp_messages')
@@ -898,3 +908,48 @@ class ConversationEvent(db.Model):
 
     def __repr__(self):
         return f'<ConversationEvent {self.id} conv={self.conversation_id} {self.acao}>'
+
+
+# Estados de um anexo recebido (Fase 3).
+ANEXO_PENDENTE = 'pendente'            # registrado, bytes ainda não processados
+ANEXO_ARMAZENADO = 'armazenado'        # no S3, pronto para exibir
+ANEXO_INDISPONIVEL = 'indisponivel'    # S3 não configurado; só metadados
+ANEXO_BLOQUEADO = 'bloqueado'          # tipo ou tamanho não aceito
+ANEXO_ERRO = 'erro'                    # falha ao baixar ou gravar
+
+
+class MessageAttachment(db.Model):
+    """
+    Arquivo recebido junto com uma mensagem de WhatsApp: foto de CNH, CRLV,
+    comprovante em PDF.
+
+    Os bytes vão só para o S3, nunca para o disco local, que some a cada
+    deploy. Sem S3 configurado o anexo fica registrado como indisponível,
+    com a referência do provedor guardada para um reprocessamento futuro.
+
+    Tabela nova: o db.create_all() cria nos dois bancos, sem migração de
+    coluna.
+    """
+    __tablename__ = 'message_attachments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey('whatsapp_messages.id'),
+                           nullable=False, index=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'), index=True)
+
+    status = db.Column(db.String(20), nullable=False, default=ANEXO_PENDENTE,
+                       server_default=db.text("'pendente'"))
+    storage_key = db.Column(db.String(300))
+    content_type = db.Column(db.String(100))
+    size_bytes = db.Column(db.Integer)
+    original_name = db.Column(db.String(200))
+    provider = db.Column(db.String(20))       # twilio | evolution
+    provider_ref = db.Column(db.Text)         # URL da Twilio ou chave da Evolution
+    error_msg = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                           server_default=db.text('CURRENT_TIMESTAMP'))
+
+    message = db.relationship('WhatsAppMessage', backref='anexos')
+
+    def __repr__(self):
+        return f'<MessageAttachment {self.id} msg={self.message_id} {self.status}>'

@@ -301,7 +301,7 @@ def conversations():
         last_at, last_message, source = max(candidates, key=lambda item: item[0])
         unread = WhatsAppMessage.query.filter_by(
             driver_id=driver.id, direction='inbound'
-        ).filter(WhatsAppMessage.status != 'lido').count()
+        ).filter(WhatsAppMessage.read_at.is_(None)).count()
         rows.append({
             'driver_id': driver.id, 'name': driver.name, 'phone': driver.phone,
             'avatar_initial': (driver.name or '?')[0].upper(),
@@ -344,8 +344,11 @@ def conversation_detail(driver_id):
             'text': msg.message_content, 'timestamp': _iso(msg.sent_at),
             'source': msg.source, 'status': msg.status,
         })
-        if msg.direction == 'inbound':
-            msg.status = 'lido'
+        if msg.direction == 'inbound' and msg.read_at is None:
+            # Leitura mora em read_at. Gravar status='lido' quebrava a
+            # idempotência do webhook do EMA, que só ignora reentrega com
+            # status='processado': o bot respondia duas vezes.
+            msg.read_at = datetime.utcnow()
     db.session.commit()
     messages.sort(key=lambda item: item['timestamp'] or '')
     deduped = []

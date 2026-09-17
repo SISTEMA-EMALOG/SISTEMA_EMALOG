@@ -16,6 +16,12 @@ from sqlalchemy import text, inspect as sa_inspect
 log = logging.getLogger(__name__)
 
 # Mapeamento de tipos Python/SQLAlchemy → SQL do PostgreSQL
+# Colunas que o laço genérico NÃO deve acrescentar, porque dependem de
+# preenchimento de dados feito na mesma transação do ALTER, num bloco próprio.
+_COLUNAS_COM_MIGRACAO_PROPRIA = {
+    ('whatsapp_messages', 'read_at'),   # _add_read_at_com_historico
+}
+
 _TYPE_MAP = {
     'INTEGER':          'INTEGER',
     'BIGINT':           'BIGINT',
@@ -109,6 +115,99 @@ def _ensure_index_dual_dialect(engine, label: str, ddl: str) -> None:
         log.warning(f"⚠️ Migration índice {label}: {exc}")
 
 
+def _add_read_at_com_historico(engine) -> None:
+    """
+    Fase 3: acrescenta whatsapp_messages.read_at e, SÓ nesse momento, acerta
+    o histórico. Roda nos dois bancos.
+
+    Três comandos na MESMA transação, porque o preenchimento não pode ser
+    repetido depois. Se ficassem separados e o segundo falhasse, o boot
+    seguinte veria a coluna pronta e pularia o preenchimento, e todas as
+    mensagens antigas apareceriam como não lidas. PostgreSQL e SQLite aceitam
+    ALTER TABLE dentro de transação, então ou entram os três ou nenhum.
+
+    1. ADD COLUMN read_at. TIMESTAMP é aceito pelos dois bancos.
+    2. Mensagens recebidas antes desta fase contam como lidas.
+    3. Desfaz status='lido' gravado pela Central nas Fases 1 e 2 em mensagem
+       recebida. Esse valor quebrava a idempotência do EMA, que só ignora
+       reentrega quando o status é 'processado'. Mensagem da Twilio volta a
+       'recebido'; as demais, que passaram pelo EMA, voltam a 'processado'.
+    """
+    try:
+        inspector = sa_inspect(engine)
+        if 'whatsapp_messages' not in inspector.get_table_names():
+            return
+        colunas = {c['name'] for c in inspector.get_columns('whatsapp_messages')}
+    except Exception as exc:
+        log.warning(f"⚠️ Migration read_at: não foi possível inspecionar: {exc}")
+        return
+
+    if 'read_at' in colunas:
+        return
+
+    comandos = [
+        'ALTER TABLE "whatsapp_messages" ADD COLUMN "read_at" TIMESTAMP',
+        "UPDATE whatsapp_messages SET read_at = COALESCE(sent_at, CURRENT_TIMESTAMP) "
+        "WHERE direction = 'inbound' AND read_at IS NULL",
+        "UPDATE whatsapp_messages SET status = 'recebido' "
+        "WHERE direction = 'inbound' AND status = 'lido' AND source = 'twilio'",
+        "UPDATE whatsapp_messages SET status = 'processado' "
+        "WHERE direction = 'inbound' AND status = 'lido' "
+        "AND (source IS NULL OR source <> 'twilio')",
+    ]
+    try:
+        if engine.dialect.name == 'sqlite':
+            contagens = _executar_atomico_sqlite(engine, comandos)
+        else:
+            contagens = []
+            with engine.begin() as conn:
+                for comando in comandos:
+                    contagens.append(conn.execute(text(comando)).rowcount)
+        log.info(f"🔧 Migration: +whatsapp_messages.read_at; {contagens[1]} recebida(s) marcada(s) "
+                 f"como lida(s); status 'lido' desfeito em {contagens[2] + contagens[3]} mensagem(ns).")
+    except Exception as exc:
+        log.warning(f"⚠️ Migration read_at: falhou e foi desfeita por inteiro: {exc}")
+
+
+def _executar_atomico_sqlite(engine, comandos):
+    """
+    Executa os comandos numa transação de verdade no SQLite.
+
+    O driver sqlite3 do Python, no modo padrão, só abre transação antes de
+    INSERT, UPDATE e DELETE. Um ALTER TABLE roda fora de transação e é gravado
+    na hora. Com engine.begin(), uma falha no preenchimento desfazia os
+    UPDATEs mas deixava a coluna criada, e o boot seguinte pulava a migração
+    para sempre. Isso foi reproduzido em teste antes desta correção.
+
+    Aqui o controle de transação do driver é desligado nesta conexão, e o
+    BEGIN é emitido à mão. O SQLite aceita ALTER TABLE dentro de transação.
+    """
+    bruta = engine.raw_connection()
+    try:
+        dbapi = bruta.driver_connection
+        anterior = dbapi.isolation_level
+        dbapi.isolation_level = None
+        cursor = dbapi.cursor()
+        try:
+            cursor.execute('BEGIN')
+            contagens = []
+            for comando in comandos:
+                cursor.execute(comando)
+                contagens.append(cursor.rowcount)
+            cursor.execute('COMMIT')
+            return contagens
+        except Exception:
+            try:
+                cursor.execute('ROLLBACK')
+            except Exception:
+                pass
+            raise
+        finally:
+            dbapi.isolation_level = anterior
+    finally:
+        bruta.close()
+
+
 def _migrate_central_atendimento(engine) -> None:
     """
     Fase 0 da Central de Atendimento. Roda nos DOIS bancos.
@@ -143,7 +242,10 @@ def _migrate_central_atendimento(engine) -> None:
         "ON conversations (contact_phone) WHERE status <> 'resolvida'"
     )
 
-    log.info("✅ Migration Central de Atendimento (Fase 0) verificada.")
+    # Fase 3.
+    _add_read_at_com_historico(engine)
+
+    log.info("✅ Migration Central de Atendimento verificada.")
 
 
 def run_migrations(db) -> None:
@@ -178,6 +280,11 @@ def run_migrations(db) -> None:
 
             for col in table.columns:
                 if col.name in db_cols:
+                    continue
+                if (table.name, col.name) in _COLUNAS_COM_MIGRACAO_PROPRIA:
+                    # Tem bloco próprio, com preenchimento de dados na mesma
+                    # transação. Acrescentá-la aqui sem esse preenchimento
+                    # faria o bloco próprio se pular para sempre.
                     continue
 
                 # Coluna existe no modelo mas não no banco — adicionar
