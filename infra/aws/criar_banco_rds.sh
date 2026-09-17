@@ -30,11 +30,27 @@ vazio()    { [[ -z "$1" || "$1" == "None" || "$1" == "null" ]]; }
 
 passo "Conta e ambiente"
 CONTA=$(aws sts get-caller-identity --query Account --output text)
-AMBIENTE=$(aws elasticbeanstalk describe-environments --no-include-deleted \
-  --query "Environments[?starts_with(CNAME || '', '${CNAME_PREFIXO}.')] | [0].[ApplicationName, EnvironmentName]" \
-  --output text)
-read -r APP ENV_NOME <<<"$AMBIENTE"
-vazio "${ENV_NOME:-}" && pare "ambiente ${CNAME_PREFIXO} não encontrado na região ${AWS_DEFAULT_REGION}"
+echo "  conta AWS: $CONTA, região $AWS_DEFAULT_REGION"
+
+# Acha o ambiente pelo endereço, sem diferenciar maiúsculas, ou pelo nome
+# passado como argumento: bash criar_banco_rds.sh Nome-do-ambiente
+LISTA=$(aws elasticbeanstalk describe-environments --no-include-deleted \
+  --query 'Environments[].[ApplicationName, EnvironmentName, CNAME, Status]' --output text)
+APP=""; ENV_NOME=""
+while IFS=$'\t' read -r a e c _; do
+  [[ -z "$e" ]] && continue
+  if [[ -n "${1:-}" ]]; then
+    [[ "$e" == "$1" ]] && { APP=$a; ENV_NOME=$e; }
+  elif [[ "${c,,}" == "${CNAME_PREFIXO}."* ]]; then
+    APP=$a; ENV_NOME=$e
+  fi
+done <<<"$LISTA"
+if vazio "$ENV_NOME"; then
+  echo "  ambientes do Elastic Beanstalk nesta conta e região (aplicação, nome, endereço, situação):"
+  if [[ -z "$LISTA" ]]; then echo "    nenhum"; else sed 's/^/    /' <<<"$LISTA"; fi
+  pare "não achei o ambiente ${1:-com endereço ${CNAME_PREFIXO}}. Nada foi alterado."
+fi
+echo "  ambiente: $ENV_NOME, aplicação $APP"
 
 INSTANCIA=$(aws elasticbeanstalk describe-environment-resources --environment-name "$ENV_NOME" \
   --query 'EnvironmentResources.Instances[0].Id' --output text)
