@@ -1,16 +1,17 @@
 """
 Central de Atendimento — blueprint do módulo.
 
-Fase 0 entregou a modelagem. Fase 1 entrega a entrada e a saída pela Twilio,
-mais a tela de conversas ligada a essa fonte de dados.
+Fase 0: modelagem. Fase 1: entrada e saída de WhatsApp e a tela.
+Fase 2: fila compartilhada entre atendentes, com a disputa decidida no banco
+(ver utils/fila.py).
 
 Regra de arquitetura: este módulo só tem lógica de atendimento. Núcleo,
 modelos e utilitários compartilhados vêm de infraestrutura_critica/.
 """
 
 import logging
-import os
 from datetime import datetime
+from types import SimpleNamespace
 
 from flask import Blueprint, jsonify, render_template, request, url_for
 from flask_login import current_user, login_required
@@ -19,19 +20,16 @@ from sqlalchemy import func, or_, inspect as sa_inspect
 from infraestrutura_critica.app import db
 from infraestrutura_critica.models import (
     Conversation,
-    User,
     WhatsAppMessage,
     CONVERSATION_ACTIVE_STATUSES,
     CONVERSATION_STATUS_OPEN,
-    CONVERSATION_STATUS_PENDING,
     CONVERSATION_STATUS_RESOLVED,
 )
-from atendimento_conversas.utils import providers, twilio_client
+from atendimento_conversas.utils import fila, providers, twilio_client
 from atendimento_conversas.utils.conversas_service import (
     EVENTO_MENSAGEM,
-    assumir_conversa,
     avisar_conversa,
-    get_or_create_conversation,
+    conversa_para_entrada,
     mensagem_ja_processada,
     registrar_entrada,
     registrar_saida,
@@ -44,14 +42,53 @@ log = logging.getLogger(__name__)
 conversas_bp = Blueprint('conversas', __name__, url_prefix='/conversas')
 
 LIMITE_MENSAGEM = 2000
+ABAS = ('fila', 'minhas', 'ativas', 'resolvidas', 'todas')
 
 
 def _staff_only():
-    return current_user.role in ('admin', 'operador', 'vendedor')
+    return current_user.role in fila.PAPEIS_ATENDENTE
 
 
 def _forbidden():
     return jsonify({'success': False, 'error': 'Acesso negado'}), 403
+
+
+def _ator():
+    """
+    Retrato de quem age, tirado no início da requisição.
+
+    As operações da fila commitam, e o commit expira todo objeto da sessão,
+    inclusive o usuário logado. Ler current_user depois disso dispara uma
+    consulta, que abre transação nova. No envio, essa transação ficaria
+    aberta durante a chamada HTTP ao provedor.
+    """
+    return SimpleNamespace(id=current_user.id, role=current_user.role)
+
+
+def _corpo():
+    return request.get_json(silent=True) or {}
+
+
+def _int_ou_none(valor):
+    if valor in (None, '', 'null'):
+        return None
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        return None
+
+
+def _responder(res, acao):
+    """Resposta JSON de uma operação da fila, com aviso em tempo real."""
+    corpo = {'ok': res.ok, 'codigo': res.codigo, 'mensagem': res.mensagem}
+    if not res.ok:
+        corpo['error'] = res.mensagem
+    if res.conversa is not None:
+        corpo['conversa'] = serializar_conversa(res.conversa)
+    if res.ok and res.codigo == 'ok':
+        # Depois do commit, que fila._executar já fez.
+        avisar_conversa(res.conversa, extra={'acao': acao})
+    return jsonify(corpo), res.http
 
 
 # ── Tela ─────────────────────────────────────────────────────────────────────
@@ -75,7 +112,7 @@ def index():
 
 # ── Webhook de entrada da Twilio ─────────────────────────────────────────────
 
-def _resposta_twiml(vazio=True):
+def _resposta_twiml():
     """A Twilio espera TwiML. Vazio significa 'recebi, não responda nada'."""
     corpo = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
     return corpo, 200, {'Content-Type': 'application/xml'}
@@ -90,8 +127,7 @@ def webhook():
     autenticação é a assinatura X-Twilio-Signature, e o caminho está em
     CSRF_EXEMPT_PREFIXES porque não existe sessão de browser aqui.
 
-    Falha fechada: sem TWILIO_AUTH_TOKEN configurado, recusa tudo. Um webhook
-    aberto deixa qualquer um injetar mensagem falsa no sistema.
+    Falha fechada: sem TWILIO_AUTH_TOKEN configurado, recusa tudo.
     """
     if not twilio_client.auth_token():
         log.error("❌ Conversas: webhook chamado sem TWILIO_AUTH_TOKEN configurado.")
@@ -108,8 +144,7 @@ def webhook():
 
     dados = twilio_client.parse_inbound(request.form)
 
-    # A Twilio manda form-urlencoded, não JSON. Se o corpo vier vazio aqui,
-    # o provável é alguém ter apontado o webhook para o content-type errado.
+    # A Twilio manda form-urlencoded, não JSON.
     if not dados['from_raw']:
         log.warning("⚠️ Conversas: webhook sem campo From.")
         return _resposta_twiml()
@@ -117,18 +152,14 @@ def webhook():
     external_id = dados['message_sid'] or None
 
     # Idempotência: a Twilio reentrega em caso de timeout ou erro 5xx.
-    if external_id:
-        ja = mensagem_ja_processada(external_id)
-        if ja is not None:
-            log.info(f"↩️ Conversas: mensagem {external_id} já registrada, ignorada.")
-            return _resposta_twiml()
+    if external_id and mensagem_ja_processada(external_id) is not None:
+        log.info(f"↩️ Conversas: mensagem {external_id} já registrada, ignorada.")
+        return _resposta_twiml()
 
     try:
-        # A conversa vem primeiro: em corrida, a recuperação é um rollback,
-        # que desfaria qualquer outra coisa pendente na mesma sessão.
-        conversa, _criada = get_or_create_conversation(
-            dados['from_raw'],
-            contact_name=dados['profile_name'] or None,
+        # Conversa ativa garantida até o commit, logo abaixo.
+        conversa, _criada = conversa_para_entrada(
+            dados['from_raw'], contact_name=dados['profile_name'] or None,
         )
         if conversa is None:
             log.warning(f"⚠️ Conversas: telefone inutilizável em {dados['from_raw']!r}.")
@@ -139,9 +170,8 @@ def webhook():
             # Anexos entram na Fase 3. Por ora registra que chegou algo.
             texto = f"[{dados['num_media']} anexo(s) recebido(s)]"
 
-        msg = registrar_entrada(
-            conversa, texto, external_id=external_id, source='twilio'
-        )
+        msg = registrar_entrada(conversa, texto, external_id=external_id,
+                                source='twilio')
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
@@ -151,19 +181,13 @@ def webhook():
         return jsonify({'error': 'Falha ao processar'}), 500
 
     avisar_conversa(conversa, extra={'nova_mensagem': True})
-    avisar_conversa(conversa, evento=EVENTO_MENSAGEM,
-                    extra={'message_id': msg.id})
+    avisar_conversa(conversa, evento=EVENTO_MENSAGEM, extra={'message_id': msg.id})
     return _resposta_twiml()
 
 
 @conversas_bp.route('/webhook/status', methods=['POST'])
 def webhook_status():
-    """
-    Callback de status de entrega da Twilio.
-
-    Atualiza whatsapp_messages.status de enviando para enviado, entregue,
-    lido ou erro, conforme o ciclo de vida da mensagem.
-    """
+    """Callback de status de entrega da Twilio."""
     if not twilio_client.auth_token():
         return jsonify({'error': 'Integração não configurada'}), 503
 
@@ -185,8 +209,7 @@ def webhook_status():
             if novo == 'entregue' and not msg.delivered_at:
                 msg.delivered_at = datetime.utcnow()
             db.session.commit()
-            avisar_conversa(msg.conversation,
-                            extra={'message_id': msg.id, 'status': novo})
+            avisar_conversa(msg.conversation, extra={'message_id': msg.id, 'status_msg': novo})
     except Exception as exc:
         db.session.rollback()
         log.warning(f"⚠️ Conversas: falha ao atualizar status de {sid}: {exc}")
@@ -194,24 +217,38 @@ def webhook_status():
     return _resposta_twiml()
 
 
-# ── API da tela ──────────────────────────────────────────────────────────────
+# ── API da tela: leitura ─────────────────────────────────────────────────────
+
+def _filtro_ativa():
+    return Conversation.status.in_(CONVERSATION_ACTIVE_STATUSES)
+
 
 @conversas_bp.route('/api/conversas')
 @login_required
 def listar():
-    """Lista de conversas, mais recentes primeiro."""
+    """
+    Conversas de uma aba, mais recentes primeiro.
+
+    fila: ativas sem dono. minhas: ativas do usuário. ativas, resolvidas, todas.
+    """
     if not _staff_only():
         return _forbidden()
 
-    status = (request.args.get('status') or '').strip()
+    eu = current_user.id
+    aba = (request.args.get('aba') or 'fila').strip()
+    if aba not in ABAS:
+        aba = 'fila'
     busca = (request.args.get('busca') or '').strip()
 
     q = Conversation.query
-    if status == 'ativas':
-        q = q.filter(Conversation.status.in_(CONVERSATION_ACTIVE_STATUSES))
-    elif status in (CONVERSATION_STATUS_OPEN, CONVERSATION_STATUS_PENDING,
-                    CONVERSATION_STATUS_RESOLVED):
-        q = q.filter(Conversation.status == status)
+    if aba == 'fila':
+        q = q.filter(_filtro_ativa(), Conversation.assigned_agent_id.is_(None))
+    elif aba == 'minhas':
+        q = q.filter(_filtro_ativa(), Conversation.assigned_agent_id == eu)
+    elif aba == 'ativas':
+        q = q.filter(_filtro_ativa())
+    elif aba == 'resolvidas':
+        q = q.filter(Conversation.status == CONVERSATION_STATUS_RESOLVED)
 
     if busca:
         like = f'%{busca}%'
@@ -220,19 +257,22 @@ def listar():
             Conversation.contact_name.ilike(like),
         ))
 
+    contagens = {
+        'fila': Conversation.query.filter(
+            _filtro_ativa(), Conversation.assigned_agent_id.is_(None)).count(),
+        'minhas': Conversation.query.filter(
+            _filtro_ativa(), Conversation.assigned_agent_id == eu).count(),
+    }
+
     conversas = q.order_by(Conversation.last_activity_at.desc(),
                            Conversation.id.desc()).limit(200).all()
     if not conversas:
-        return jsonify({'conversas': []})
+        return jsonify({'conversas': [], 'contagens': contagens, 'aba': aba})
 
     ids = [c.id for c in conversas]
 
-    # Não lidas por conversa, numa consulta só. Agrupamento simples, sem
-    # função exclusiva de dialeto.
     nao_lidas = dict(
-        db.session.query(
-            WhatsAppMessage.conversation_id, func.count(WhatsAppMessage.id)
-        )
+        db.session.query(WhatsAppMessage.conversation_id, func.count(WhatsAppMessage.id))
         .filter(WhatsAppMessage.conversation_id.in_(ids))
         .filter(WhatsAppMessage.direction == 'inbound')
         .filter(WhatsAppMessage.status != 'lido')
@@ -240,8 +280,7 @@ def listar():
         .all()
     )
 
-    # Última mensagem de cada conversa, sem carregar a thread inteira.
-    # max(id) por conversa é portável nos dois bancos.
+    # Última mensagem de cada conversa: max(id) por conversa, portável.
     ultimos_ids = (
         db.session.query(func.max(WhatsAppMessage.id))
         .filter(WhatsAppMessage.conversation_id.in_(ids))
@@ -249,29 +288,51 @@ def listar():
     )
     ultimas = {
         m.conversation_id: m
-        for m in WhatsAppMessage.query.filter(
-            WhatsAppMessage.id.in_(ultimos_ids)
-        ).all()
+        for m in WhatsAppMessage.query.filter(WhatsAppMessage.id.in_(ultimos_ids)).all()
     }
 
-    return jsonify({'conversas': [
-        serializar_conversa(c, nao_lidas.get(c.id, 0), ultimas.get(c.id))
-        for c in conversas
-    ]})
+    return jsonify({
+        'aba': aba,
+        'contagens': contagens,
+        'conversas': [serializar_conversa(c, nao_lidas.get(c.id, 0), ultimas.get(c.id))
+                      for c in conversas],
+    })
+
+
+def _permissoes(conversa, eu, sou_admin, canal_ok):
+    """
+    O que a tela deve oferecer. Só orienta a interface: toda ação é
+    revalidada no banco pela fila, e clique em estado velho recebe 409.
+    """
+    dono = conversa.assigned_agent_id
+    ativa = conversa.status in CONVERSATION_ACTIVE_STATUSES
+    return {
+        'assumir': ativa and dono is None,
+        'enviar': canal_ok and ativa and dono in (None, eu),
+        'transferir': ativa and (dono == eu or (sou_admin and dono is not None)),
+        'atribuir': ativa and sou_admin and dono is None,
+        'liberar': ativa and dono is not None and (dono == eu or sou_admin),
+        'devolver_bot': (ativa and conversa.driver_id is not None
+                         and (dono in (None, eu) or sou_admin)),
+        'resolver': ativa and (dono in (None, eu) or sou_admin),
+        'reabrir': not ativa,
+    }
 
 
 @conversas_bp.route('/api/conversas/<int:conversa_id>')
 @login_required
 def detalhe(conversa_id):
-    """Thread de uma conversa. Marca as recebidas como lidas."""
+    """Thread de uma conversa, com permissões e histórico."""
     if not _staff_only():
         return _forbidden()
+
+    eu = current_user.id
+    sou_admin = current_user.role == 'admin'
 
     conversa = Conversation.query.get_or_404(conversa_id)
     mensagens = (WhatsAppMessage.query
                  .filter_by(conversation_id=conversa.id)
-                 .order_by(WhatsAppMessage.sent_at.asc(),
-                           WhatsAppMessage.id.asc())
+                 .order_by(WhatsAppMessage.sent_at.asc(), WhatsAppMessage.id.asc())
                  .all())
 
     marcou = False
@@ -286,10 +347,10 @@ def detalhe(conversa_id):
             db.session.rollback()
             log.warning(f"⚠️ Conversas: falha ao marcar como lidas: {exc}")
 
+    canal_ok = providers.canal_configurado() is not None
     driver = conversa.driver
     return jsonify({
-        'conversa': serializar_conversa(conversa, 0,
-                                        mensagens[-1] if mensagens else None),
+        'conversa': serializar_conversa(conversa, 0, mensagens[-1] if mensagens else None),
         'mensagens': [serializar_mensagem(m) for m in mensagens],
         'motorista': {
             'id': driver.id,
@@ -301,68 +362,65 @@ def detalhe(conversa_id):
             'placa': driver.vehicle_plate,
             'validado': bool(driver.validated),
         } if driver else None,
+        'eventos': fila.eventos(conversa.id, limite=20),
+        'eu_id': eu,
+        'sou_admin': sou_admin,
         'canal_ativo': providers.canal_configurado(),
-        'pode_enviar': providers.canal_configurado() is not None,
+        'pode_enviar': canal_ok,
+        'permissoes': _permissoes(conversa, eu, sou_admin, canal_ok),
     })
 
 
-@conversas_bp.route('/api/conversas/<int:conversa_id>/enviar', methods=['POST'])
+@conversas_bp.route('/api/atendentes')
 @login_required
-def enviar(conversa_id):
-    """Envia uma mensagem pela Twilio e grava como saída."""
+def atendentes():
+    """Destinos possíveis de transferência."""
     if not _staff_only():
         return _forbidden()
+    return jsonify({'atendentes': [
+        {'id': u.id, 'nome': u.username, 'papel': u.role}
+        for u in fila.atendentes_ativos()
+    ]})
 
-    conversa = Conversation.query.get_or_404(conversa_id)
 
-    corpo = request.get_json(silent=True) or {}
-    texto = str(corpo.get('texto') or '').strip()
-    if not texto or len(texto) > LIMITE_MENSAGEM:
-        return jsonify({
-            'error': f'A mensagem deve ter entre 1 e {LIMITE_MENSAGEM} caracteres.'
-        }), 400
+# ── API da tela: fila ────────────────────────────────────────────────────────
 
-    if providers.canal_configurado() is None:
-        return jsonify({
-            'error': 'Nenhum canal de WhatsApp configurado. Configure a '
-                     'Evolution ou a Twilio no ambiente.'
-        }), 503
+@conversas_bp.route('/api/conversas/<int:conversa_id>/assumir', methods=['POST'])
+@login_required
+def acao_assumir(conversa_id):
+    if not _staff_only():
+        return _forbidden()
+    return _responder(fila.assumir(conversa_id, _ator()), 'assumiu')
 
-    # A atribuição é respeitada, mas a fila e o lock são a Fase 2.
-    if (conversa.assigned_agent_id
-            and conversa.assigned_agent_id != current_user.id
-            and current_user.role != 'admin'):
-        return jsonify({'error': 'Esta conversa está atribuída a outro atendente.'}), 409
 
-    canal = None
-    try:
-        resultado = providers.enviar(conversa.contact_phone, texto)
-        canal = resultado.get('provider')
-        status = resultado.get('status') or 'enviado'
-        external_id = resultado.get('external_id')
-        erro = None
-    except providers.EnvioError as exc:
-        canal, status, external_id, erro = None, 'erro', None, str(exc)
-        log.error(f"❌ Conversas: envio falhou na conversa {conversa.id}: {exc}")
+@conversas_bp.route('/api/conversas/<int:conversa_id>/transferir', methods=['POST'])
+@login_required
+def acao_transferir(conversa_id):
+    if not _staff_only():
+        return _forbidden()
+    corpo = _corpo()
+    res = fila.transferir(conversa_id, _ator(), corpo.get('para'),
+                          de_esperado=_int_ou_none(corpo.get('de')))
+    return _responder(res, 'transferiu')
 
-    try:
-        msg = registrar_saida(conversa, texto, autor_id=current_user.id,
-                              external_id=external_id, status=status)
-        # Responder é assumir. Sem isto o EMA continuaria respondendo em
-        # paralelo ao atendente, na mesma conversa.
-        if erro is None:
-            assumir_conversa(conversa, current_user.id)
-        db.session.commit()
-    except Exception as exc:
-        db.session.rollback()
-        log.error(f"❌ Conversas: falha ao gravar mensagem enviada: {exc}")
-        return jsonify({'error': 'Mensagem enviada, mas não foi possível registrá-la.'}), 500
 
-    avisar_conversa(conversa, extra={'message_id': msg.id})
+@conversas_bp.route('/api/conversas/<int:conversa_id>/liberar', methods=['POST'])
+@login_required
+def acao_liberar(conversa_id):
+    if not _staff_only():
+        return _forbidden()
+    res = fila.liberar(conversa_id, _ator(), de_esperado=_int_ou_none(_corpo().get('de')))
+    return _responder(res, 'liberou')
 
-    if erro:
-        return jsonify({'error': erro, 'message_id': msg.id}), 502
-    return jsonify({'ok': True, 'mensagem': serializar_mensagem(msg)})
+
+@conversas_bp.route('/api/conversas/<int:conversa_id>/devolver-bot', methods=['POST'])
+@login_required
+def acao_devolver_bot(conversa_id):
+    if not _staff_only():
+        return _forbidden()
+    res = fila.devolver_ao_bot(conversa_id, _ator(),
+                               de_esperado=_int_ou_none(_corpo().get('de')))
+    return _responder(res, 'devolveu_bot')
 
 
 @conversas_bp.route('/api/conversas/<int:conversa_id>/status', methods=['POST'])
@@ -372,40 +430,120 @@ def mudar_status(conversa_id):
     if not _staff_only():
         return _forbidden()
 
-    conversa = Conversation.query.get_or_404(conversa_id)
-    novo = str((request.get_json(silent=True) or {}).get('status') or '').strip()
-    if novo not in (CONVERSATION_STATUS_OPEN, CONVERSATION_STATUS_PENDING,
-                    CONVERSATION_STATUS_RESOLVED):
-        return jsonify({'error': 'Status inválido.'}), 400
+    corpo = _corpo()
+    novo = str(corpo.get('status') or '').strip()
+    ator = _ator()
 
-    conversa.status = novo
-    conversa.resolved_at = (datetime.utcnow()
-                            if novo == CONVERSATION_STATUS_RESOLVED else None)
+    if novo == CONVERSATION_STATUS_RESOLVED:
+        visto_ate = None
+        if corpo.get('visto_ate'):
+            try:
+                visto_ate = datetime.fromisoformat(str(corpo['visto_ate']))
+            except ValueError:
+                return jsonify({'ok': False, 'error': 'visto_ate inválido.'}), 400
+        return _responder(fila.resolver(conversa_id, ator, visto_ate=visto_ate), 'resolveu')
+
+    if novo == CONVERSATION_STATUS_OPEN:
+        return _responder(fila.reabrir(conversa_id, ator), 'reabriu')
+
+    return jsonify({'ok': False, 'error': 'Status inválido.'}), 400
+
+
+@conversas_bp.route('/api/conversas/<int:conversa_id>/enviar', methods=['POST'])
+@login_required
+def enviar(conversa_id):
+    """
+    Envia mensagem pelo canal ativo.
+
+    Ordem obrigatória, e o motivo de cada passo:
+
+    1. Assumir, com commit. Se a conversa estiver livre, quem envia vira
+       dono; se outro chegou primeiro, 409 e NADA é enviado. Invertido, dois
+       atendentes respondendo juntos mandariam as duas mensagens.
+    2. Chamar o provedor SEM transação aberta. Nada de ler o banco entre o
+       commit do passo 1 e o fim da chamada HTTP: por isso os dados vêm do
+       retrato tirado dentro da operação, e o ator vem de _ator().
+    3. Gravar a mensagem numa transação curta.
+    """
+    if not _staff_only():
+        return _forbidden()
+
+    ator = _ator()
+    texto = str(_corpo().get('texto') or '').strip()
+    if not texto or len(texto) > LIMITE_MENSAGEM:
+        return jsonify({
+            'ok': False,
+            'error': f'A mensagem deve ter entre 1 e {LIMITE_MENSAGEM} caracteres.'
+        }), 400
+
+    if providers.canal_configurado() is None:
+        return jsonify({
+            'ok': False,
+            'error': 'Nenhum canal de WhatsApp configurado. Configure a '
+                     'Evolution ou a Twilio no ambiente.'
+        }), 503
+
+    # 1. Assumir.
+    posse = fila.garantir_dono_para_envio(conversa_id, ator)
+    if not posse.ok:
+        return _responder(posse, 'enviar')
+    if posse.codigo == 'ok':
+        # Acabou de assumir: os outros atendentes precisam saber já.
+        avisar_conversa(posse.conversa, extra={'acao': 'assumiu'})
+        db.session.rollback()   # encerra a leitura feita pelo aviso
+
+    telefone = posse.dados['contact_phone']
+    driver_id = posse.dados['driver_id']
+
+    # 2. Enviar, sem transação aberta.
     try:
+        resultado = providers.enviar(telefone, texto)
+        status_msg = resultado.get('status') or 'enviado'
+        external_id = resultado.get('external_id')
+        erro = None
+    except providers.EnvioError as exc:
+        status_msg, external_id, erro = 'erro', None, str(exc)
+        log.error(f"❌ Conversas: envio falhou na conversa {conversa_id}: {exc}")
+
+    # 3. Gravar.
+    try:
+        msg = registrar_saida(conversa_id, telefone, driver_id, texto,
+                              autor_id=ator.id, external_id=external_id,
+                              status=status_msg)
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        log.error(f"❌ Conversas: falha ao mudar status: {exc}")
-        return jsonify({'error': 'Não foi possível alterar o status.'}), 500
+        log.error(f"❌ Conversas: falha ao gravar mensagem enviada: {exc}")
+        return jsonify({'ok': False,
+                        'error': 'Mensagem enviada, mas não foi possível registrá-la.'}), 500
 
-    avisar_conversa(conversa)
-    return jsonify({'ok': True, 'status': novo})
+    avisar_conversa(db.session.get(Conversation, conversa_id),
+                    extra={'message_id': msg.id})
+
+    if erro:
+        return jsonify({'ok': False, 'error': erro, 'message_id': msg.id}), 502
+    return jsonify({'ok': True, 'mensagem': serializar_mensagem(msg)})
+
+
+@conversas_bp.route('/api/conversas/<int:conversa_id>/eventos')
+@login_required
+def listar_eventos(conversa_id):
+    if not _staff_only():
+        return _forbidden()
+    return jsonify({'eventos': fila.eventos(conversa_id)})
 
 
 # ── Diagnóstico ──────────────────────────────────────────────────────────────
 
 @conversas_bp.route('/api/status')
 @login_required
-def status():
+def diagnostico():
     """
-    Diagnóstico: confirma que o schema da Central existe DE FATO no banco em
-    uso, e se a Twilio está configurada.
+    Confirma que o schema da Central existe DE FATO no banco em uso.
 
-    Existe por um motivo concreto. O auto-migrator de utils/migrations.py
-    engole falhas de DDL em log e segue o boot, então uma coluna pode não ter
-    sido criada em produção sem que nada quebre visivelmente. Além disso, se
-    a conexão com o PostgreSQL falhar, a app cai para um SQLite local e
-    continua de pé. Este endpoint responde às duas perguntas de uma vez.
+    O auto-migrator de utils/migrations.py engole falhas de DDL em log e segue
+    o boot, e se a conexão com o PostgreSQL falhar a app cai para um SQLite
+    local e continua de pé. Este endpoint responde às duas perguntas.
     """
     if not _staff_only():
         return _forbidden()
@@ -425,26 +563,23 @@ def status():
 
         tem_tabela = 'conversations' in tabelas
         tem_coluna = 'conversation_id' in colunas_wa
-        schema_ok = tem_tabela and tem_coluna
+        schema_ok = tem_tabela and tem_coluna and 'conversation_events' in tabelas
 
         return jsonify({
             'success': True,
             'dialeto': db.engine.dialect.name,
             'schema_ok': schema_ok,
             'tabela_conversations': tem_tabela,
+            'tabela_conversation_events': 'conversation_events' in tabelas,
             'coluna_conversation_id': tem_coluna,
             'indice_conversation_id': 'idx_whatsapp_messages_conversation_id' in indices,
             'indice_conversa_ativa': 'uq_conversations_open_contact' in indices,
-            'total_conversas': Conversation.query.count() if schema_ok else None,
+            'total_conversas': Conversation.query.count() if tem_tabela else None,
             'mensagens_sem_conversa': (
-                WhatsAppMessage.query
-                .filter(WhatsAppMessage.conversation_id.is_(None))
-                .count() if schema_ok else None
+                WhatsAppMessage.query.filter(WhatsAppMessage.conversation_id.is_(None)).count()
+                if tem_coluna else None
             ),
             'canais': providers.diagnostico(),
-            # URLs exatas para colar no console da Twilio. Geradas a partir
-            # da requisição real, então já refletem o domínio e o HTTPS que o
-            # balanceador entrega, que é justamente o que a Twilio assina.
             'webhook_entrada': url_for('conversas.webhook', _external=True),
             'webhook_status': url_for('conversas.webhook_status', _external=True),
         })

@@ -5,16 +5,21 @@ Fica separado das rotas pelo mesmo motivo de
 kanban_contratacao/utils/contracting_service.py: o webhook, a tela e o backfill
 precisam das mesmas regras, e duplicá-las é como as duas normalizações de
 telefone deste projeto passaram a divergir.
+
+Atribuição, transferência e resolução ficam em utils/fila.py, que decide as
+disputas no banco.
 """
 
 import logging
 from datetime import datetime
 
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from infraestrutura_critica.app import db, socketio
 from infraestrutura_critica.models import (
     Conversation,
+    User,
     WhatsAppMessage,
     CONVERSATION_ACTIVE_STATUSES,
     CONVERSATION_STATUS_OPEN,
@@ -32,6 +37,11 @@ SALA_OPERADORES = 'operators'
 
 EVENTO_CONVERSA = 'conversa_atualizada'
 EVENTO_MENSAGEM = 'conversa_mensagem'
+
+# Voltas de conversa_para_entrada. Cada volta só se repete se a conversa foi
+# resolvida entre a leitura e a gravação, o que exige um clique humano no
+# mesmo instante; três é folga larga.
+TENTATIVAS_ENTRADA = 3
 
 
 # ── Conversa ─────────────────────────────────────────────────────────────────
@@ -56,9 +66,8 @@ def get_or_create_conversation(telefone_bruto, contact_name=None, driver=None):
     falhar, e a recuperação é um rollback — que desfaria também o que já
     estivesse pendente na mesma sessão.
 
-    A corrida é real: a Twilio reentrega webhook, e duas entregas do mesmo
-    contato podem chegar juntas. Conferir em Python antes do INSERT não
-    basta, porque as duas conferências passam antes de qualquer gravação.
+    Para anexar mensagem recebida, use conversa_para_entrada, que além disso
+    garante que a conversa continua ativa no momento do commit.
     """
     chave = normalize_contact_key(telefone_bruto)
     if not chave:
@@ -80,6 +89,9 @@ def get_or_create_conversation(telefone_bruto, contact_name=None, driver=None):
         contact_name=(contact_name or (driver.name if driver else None) or None),
         driver_id=driver.id if driver else None,
         status=CONVERSATION_STATUS_OPEN,
+        # Se um humano já tinha tomado este motorista, a conversa nova nasce
+        # com o bot calado. O dono vem do cadastro; resolver limpa esse dono,
+        # então normalmente a conversa nova cai livre na fila.
         handling_mode=(driver.whatsapp_mode if driver else None) or 'auto',
         assigned_agent_id=driver.whatsapp_assigned_to if driver else None,
         last_activity_at=datetime.utcnow(),
@@ -99,48 +111,54 @@ def get_or_create_conversation(telefone_bruto, contact_name=None, driver=None):
     return conversa, True
 
 
-def assumir_conversa(conversa, usuario_id):
+def _tocar(conversa_id, quando):
     """
-    Passa a conversa para atendimento humano e CALA O BOT.
+    Atualiza last_activity_at SÓ se a conversa continua ativa.
 
-    Sem isto, responder pela Central enquanto o motorista está em modo
-    automático faz o EMA responder também: duas vozes na mesma conversa,
-    para o mesmo motorista, sem ninguém perceber.
-
-    O EMA decide se fala lendo Driver.whatsapp_mode, não a conversa. Por
-    isso o modo é espelhado no cadastro do motorista, que é onde ele olha.
-    Ver prospeccao_captacao_motorista/ema_agent.py, no ponto em que checa
-    whatsapp_mode == 'manual' e marca a mensagem como processada sem
-    responder.
-
-    A atribuição definitiva, com disputa entre atendentes, é da Fase 2.
-    Aqui só se garante que quem respondeu primeiro fica como responsável.
+    UPDATE condicional: trava a linha até o commit de quem chamou. Devolve o
+    número de linhas afetadas; 0 significa que a conversa foi resolvida.
+    Nunca reabre conversa: reabrir é ação explícita, em fila.reabrir.
     """
-    if conversa is None:
-        return
-
-    conversa.handling_mode = 'manual'
-    if conversa.assigned_agent_id is None:
-        conversa.assigned_agent_id = usuario_id
-        conversa.assigned_at = datetime.utcnow()
-
-    driver = conversa.driver
-    if driver is not None:
-        driver.whatsapp_mode = 'manual'
-        if driver.whatsapp_assigned_to is None:
-            driver.whatsapp_assigned_to = conversa.assigned_agent_id
+    stmt = (
+        update(Conversation)
+        .where(Conversation.id == conversa_id,
+               Conversation.status.in_(CONVERSATION_ACTIVE_STATUSES))
+        .values(last_activity_at=quando)
+        .execution_options(synchronize_session=False)
+    )
+    return db.session.execute(stmt).rowcount
 
 
-def registrar_atividade(conversa, quando=None):
-    """Atualiza o carimbo de atividade e reabre a conversa se estava resolvida."""
-    if conversa is None:
-        return
-    quando = quando or datetime.utcnow()
-    if conversa.last_activity_at is None or quando > conversa.last_activity_at:
-        conversa.last_activity_at = quando
-    if conversa.status not in CONVERSATION_ACTIVE_STATUSES:
-        conversa.status = CONVERSATION_STATUS_OPEN
-        conversa.resolved_at = None
+def conversa_para_entrada(telefone_bruto, contact_name=None, driver=None):
+    """
+    Conversa ATIVA para anexar uma mensagem recebida. Devolve (conversa, criada).
+
+    Resolve uma corrida real. O webhook lê a conversa como ativa; no mesmo
+    instante um atendente a resolve; o webhook grava a mensagem nela. A
+    mensagem nova do contato fica presa numa conversa fechada e some da fila.
+
+    Aqui a última atividade é gravada por UPDATE condicional em status ativo.
+    Se não casar, a conversa foi resolvida no meio do caminho e a próxima
+    volta abre outra. Casando, a linha fica travada até o commit de quem
+    chamou, então a conversa continua ativa quando a mensagem for gravada.
+
+    O commit é de quem chama, e deve vir logo em seguida, sem chamada
+    externa no meio.
+    """
+    for _ in range(TENTATIVAS_ENTRADA):
+        conversa, criada = get_or_create_conversation(
+            telefone_bruto, contact_name=contact_name, driver=driver
+        )
+        if conversa is None:
+            return None, False
+        if _tocar(conversa.id, datetime.utcnow()) == 1:
+            db.session.refresh(conversa)
+            return conversa, criada
+        log.info(f"↪️ Conversas: conversa {conversa.id} resolvida durante a entrada; abrindo outra.")
+        db.session.expire(conversa)
+
+    log.error("❌ Conversas: não foi possível obter conversa ativa para a mensagem recebida.")
+    return None, False
 
 
 # ── Mensagens ────────────────────────────────────────────────────────────────
@@ -160,7 +178,12 @@ def mensagem_ja_processada(external_id):
 
 def registrar_entrada(conversa, texto, external_id=None, quando=None,
                       source='twilio'):
-    """Grava uma mensagem recebida e devolve a linha."""
+    """
+    Grava uma mensagem recebida e devolve a linha.
+
+    Espera uma conversa obtida por conversa_para_entrada, que já gravou a
+    atividade e garantiu que a conversa está ativa.
+    """
     msg = WhatsAppMessage(
         conversation_id=conversa.id,
         driver_id=conversa.driver_id,
@@ -173,27 +196,33 @@ def registrar_entrada(conversa, texto, external_id=None, quando=None,
         sent_at=quando or datetime.utcnow(),
     )
     db.session.add(msg)
-    registrar_atividade(conversa, msg.sent_at)
     return msg
 
 
-def registrar_saida(conversa, texto, autor_id=None, external_id=None,
-                    status='enviado', source='operator'):
-    """Grava uma mensagem enviada e devolve a linha."""
+def registrar_saida(conversa_id, contact_phone, driver_id, texto, autor_id=None,
+                    external_id=None, status='enviado', source='operator'):
+    """
+    Grava uma mensagem enviada e devolve a linha.
+
+    Recebe valores simples em vez do objeto da conversa: é chamada depois do
+    envio HTTP, e o envio acontece com a sessão já commitada. Reusar o objeto
+    carregado antes faria uma leitura extra só para descobrir o telefone.
+    """
+    agora = datetime.utcnow()
     msg = WhatsAppMessage(
-        conversation_id=conversa.id,
-        driver_id=conversa.driver_id,
-        phone_number=conversa.contact_phone[:20],
+        conversation_id=conversa_id,
+        driver_id=driver_id,
+        phone_number=(contact_phone or '')[:20],
         message_content=texto or '',
         direction='outbound',
         source=source,
         status=status,
         created_by=autor_id,
         external_message_id=external_id or None,
-        sent_at=datetime.utcnow(),
+        sent_at=agora,
     )
     db.session.add(msg)
-    registrar_atividade(conversa, msg.sent_at)
+    _tocar(conversa_id, agora)
     return msg
 
 
@@ -204,7 +233,7 @@ def _iso(valor):
 
 
 def serializar_conversa(conversa, nao_lidas=None, ultima=None):
-    """Resumo de uma conversa para a lista da tela."""
+    """Resumo de uma conversa para a lista e o cabeçalho da tela."""
     driver = conversa.driver
     nome = conversa.contact_name or (driver.name if driver else None)
     return {
@@ -218,7 +247,9 @@ def serializar_conversa(conversa, nao_lidas=None, ultima=None):
         'assigned_agent_id': conversa.assigned_agent_id,
         'assigned_agent': (conversa.assigned_agent.username
                            if conversa.assigned_agent else None),
+        'assigned_at': _iso(conversa.assigned_at),
         'last_activity_at': _iso(conversa.last_activity_at),
+        'resolved_at': _iso(conversa.resolved_at),
         'ultima_mensagem': (ultima.message_content if ultima else ''),
         'nao_lidas': nao_lidas if nao_lidas is not None else 0,
     }
@@ -241,25 +272,35 @@ def serializar_mensagem(msg):
 
 def avisar_conversa(conversa, evento=EVENTO_CONVERSA, extra=None):
     """
-    Avisa os atendentes que a conversa mudou.
+    Avisa os atendentes que a conversa mudou. SEMPRE depois do commit.
 
-    Manda só identificadores, nunca o texto da mensagem. Dois motivos: o
-    toast global do sistema interpola sem escapar, e conteúdo de WhatsApp vem
-    de terceiro não autenticado; e a sala 'operators' inclui gente que ainda
-    não abriu aquela conversa.
+    O evento só notifica; quem decide é o banco. Uma tela que perdeu o evento
+    continua segura, porque qualquer clique em cima de estado velho recebe 409
+    do servidor.
+
+    Manda identificadores e o estado de atribuição, nunca o texto da mensagem.
+    O toast global do sistema interpola sem escapar, conteúdo de WhatsApp vem
+    de terceiro não autenticado, e a sala 'operators' inclui quem não abriu a
+    conversa.
     """
     if conversa is None:
         return
+    dono_id = conversa.assigned_agent_id
+    dono = db.session.get(User, dono_id) if dono_id else None
     payload = {
         'conversation_id': conversa.id,
         'contact_phone': conversa.contact_phone,
         'status': conversa.status,
         'driver_id': conversa.driver_id,
+        'handling_mode': conversa.handling_mode,
+        'assigned_agent_id': dono_id,
+        'assigned_agent': dono.username if dono else None,
+        'last_activity_at': _iso(conversa.last_activity_at),
     }
     if extra:
         payload.update(extra)
     try:
         socketio.emit(evento, payload, room=SALA_OPERADORES)
     except Exception as exc:
-        # Falha de tempo real nunca pode derrubar a gravação da mensagem.
+        # Falha de tempo real nunca pode derrubar a operação já commitada.
         log.warning(f"⚠️ Conversas: falha ao emitir {evento}: {exc}")

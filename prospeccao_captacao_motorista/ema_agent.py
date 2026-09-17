@@ -339,15 +339,21 @@ def _process_single_message(msg_data: dict):
     # Resolvida ANTES do add do inbound de propósito: em corrida, a
     # recuperação de get_or_create_conversation é um rollback, que desfaria
     # qualquer coisa já pendente nesta mesma sessão.
+    #
+    # conversa_para_entrada, e não get_or_create_conversation: se um
+    # atendente resolver a conversa neste mesmo instante, a mensagem nova não
+    # fica presa numa conversa fechada. O commit logo abaixo, antes de
+    # qualquer chamada de IA, solta a linha da conversa.
     conversa = None
     try:
         from atendimento_conversas.utils.conversas_service import (
-            get_or_create_conversation,
+            conversa_para_entrada,
         )
-        conversa, _nova = get_or_create_conversation(
+        conversa, _nova = conversa_para_entrada(
             phone, driver=driver_for_message
         )
     except Exception as conv_exc:
+        db.session.rollback()
         logger.warning(f"⚠️ Conversas: falha ao vincular conversa de {phone}: {conv_exc}")
 
     inbound = existing_inbound or WhatsAppMessage(
@@ -360,6 +366,8 @@ def _process_single_message(msg_data: dict):
     )
     if not existing_inbound:
         db.session.add(inbound)
+    elif existing_inbound.conversation_id is None and conversa is not None:
+        existing_inbound.conversation_id = conversa.id
     # Reserve the provider message ID before any AI/external side effect. A
     # concurrent redelivery is stopped by the unique index at this flush.
     db.session.flush()
@@ -369,17 +377,35 @@ def _process_single_message(msg_data: dict):
     inbound.response_at = datetime.utcnow()
     db.session.commit()
 
-    if driver_for_message and driver_for_message.whatsapp_mode == 'manual':
+    # Humano no controle: o bot se cala. A conversa é a autoridade da Central
+    # de Atendimento; o cadastro do motorista é o espelho que o restante do
+    # EMA lê. Os dois são checados, para que um espelho atrasado nunca faça o
+    # bot falar numa conversa assumida por um atendente.
+    humano_no_controle = (
+        (driver_for_message is not None and driver_for_message.whatsapp_mode == 'manual')
+        or (conversa is not None and conversa.handling_mode == 'manual')
+    )
+    if humano_no_controle:
         inbound.status = 'processado'
         db.session.commit()
-        socketio.emit('contracting_conversation_update', {
-            'driver_id': driver_for_message.id
-        }, room='operators')
+        if driver_for_message is not None:
+            socketio.emit('contracting_conversation_update', {
+                'driver_id': driver_for_message.id
+            }, room='operators')
+        if conversa is not None:
+            from atendimento_conversas.utils.conversas_service import avisar_conversa
+            avisar_conversa(conversa, extra={'nova_mensagem': True})
         return
 
     if ema_session and active_bid:
-        driver_for_message.whatsapp_mode = 'manual'
-        driver_for_message.whatsapp_assigned_to = None
+        # Ordem de lock obrigatória: linha da conversa ANTES da do motorista.
+        # É a mesma ordem das operações da fila (atendimento_conversas/utils/
+        # fila.py). Invertida aqui, um atendente assumindo esta conversa no
+        # mesmo instante travaria contra este webhook, e o PostgreSQL
+        # abortaria um dos dois por deadlock.
+        from atendimento_conversas.utils import fila
+        fila.escalar_pelo_ema(conversa.id if conversa is not None else None,
+                              driver_for_message)
         inbound.source = 'general'
         inbound.status = 'processado'
         db.session.commit()
@@ -580,7 +606,7 @@ def session_send(sid):
     session = EmaSession.query.get_or_404(sid)
     if session.driver.whatsapp_mode != 'manual' or \
             session.driver.whatsapp_assigned_to != current_user.id:
-        return jsonify({'error': 'Assuma esta conversa na Central de Contratação antes de enviar.'}), 409
+        return jsonify({'error': 'Assuma esta conversa na Central de Atendimento, em Conversas, antes de enviar.'}), 409
     text    = (request.json or {}).get('text', '').strip()
     if not text:
         return jsonify({'error': 'Mensagem vazia'}), 400

@@ -854,3 +854,47 @@ class Conversation(db.Model):
 
     def __repr__(self):
         return f'<Conversation {self.id} {self.contact_phone} {self.status}>'
+
+
+# Ações registradas no histórico de uma conversa (Fase 2).
+CONVERSATION_EVENT_ACTIONS = (
+    'assumiu',         # atendente pegou conversa livre
+    'transferiu',      # dono ou admin passou para outro atendente
+    'liberou',         # dono devolveu para a fila humana
+    'devolveu_bot',    # conversa voltou para o EMA
+    'escalou_humano',  # o EMA pediu atendimento humano
+    'resolveu',
+    'reabriu',
+)
+
+
+class ConversationEvent(db.Model):
+    """
+    Quem fez o quê numa conversa, e quando.
+
+    Tabela nova: o db.create_all() cria nos dois bancos, sem migração de
+    coluna. Serve para rastrear transferências e é a base dos relatórios por
+    atendente da Fase 4.
+
+    ator_id nulo significa que a ação foi do sistema, por exemplo o EMA
+    escalando para humano.
+    """
+    __tablename__ = 'conversation_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'),
+                                nullable=False, index=True)
+    acao = db.Column(db.String(20), nullable=False)
+    de_agente_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    para_agente_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    ator_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                           server_default=db.text('CURRENT_TIMESTAMP'), index=True)
+
+    conversation = db.relationship(
+        'Conversation',
+        backref=db.backref('eventos', order_by='ConversationEvent.id'),
+    )
+
+    def __repr__(self):
+        return f'<ConversationEvent {self.id} conv={self.conversation_id} {self.acao}>'
