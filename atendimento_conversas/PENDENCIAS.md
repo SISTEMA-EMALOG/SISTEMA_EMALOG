@@ -9,6 +9,41 @@ Ao resolver um item, apague-o daqui no mesmo commit da correção.
 
 ---
 
+## 0. Urgente — produção sem banco persistente
+
+### 0.1 Produção roda em SQLite e perde tudo a cada deploy
+**Verificado em 17/09/2026**, por `/conversas/api/status` em produção:
+`"dialeto": "sqlite"`. Nenhuma configuração define `DATABASE_URL`: o
+`.ebextensions/session-secret.config` não tem a chave e o `.env` a deixa em
+branco. Sem ela, `infraestrutura_critica/app.py` usa `instance/emalog.db`
+dentro da pasta da aplicação, que o Elastic Beanstalk substitui a cada deploy.
+
+Consequências:
+- Tudo o que foi cadastrado em produção entre dois deploys se perdeu no deploy
+  seguinte. Isso já acontecia antes da Central: o zip original levava um banco
+  vazio, num caminho que a aplicação nem lê.
+- O backup diário grava em `backups/`, na mesma pasta, e se perde junto. O
+  destino externo, `PRIVATE_OBJECT_DIR`, é do Replit e não existe na AWS.
+- Com mais de uma instância, cada uma teria um banco diferente.
+
+O que fazer:
+1. Não publicar outro deploy até resolver, se houver dados reais em produção.
+2. Criar um PostgreSQL persistente. Recomendado: Amazon RDS em `sa-east-1`,
+   na mesma VPC do ambiente.
+3. Definir `DATABASE_URL` nas propriedades de ambiente do Elastic Beanstalk.
+4. Depois de confirmar `"dialeto": "postgresql"`, fazer a aplicação recusar
+   subir em SQLite quando estiver no Elastic Beanstalk. Hoje, se o PostgreSQL
+   estiver fora do ar no boot, ela cai para SQLite vazio sem avisar ninguém.
+
+### 0.2 Servidor da Evolution fora do ar
+**Verificado em 17/09/2026.** `evolution-evolution.iqutxq.easypanel.host`
+(191.101.235.249) não aceita conexão nas portas 80 e 443, nem a partir da AWS
+nem a partir de fora. É o servidor ou o firewall dele, não o código. Enquanto
+isso, nenhuma mensagem sai pela Central nem pelo EMA, e o webhook de entrada
+também não chega. Conferir o servidor no painel do Easypanel.
+
+---
+
 ## 1. Segurança — resolver primeiro
 
 ### 1.1 Segredos vazados no histórico do git
@@ -67,11 +102,6 @@ a cada deploy.
 usa chaves relativas ao diretório do projeto via `storage.get_file`. É possível
 que documentos coletados pelo EMA nem apareçam na ficha.
 
-### 2.3 Confirmar que produção usa PostgreSQL
-**A verificar.** Se a conexão com o banco falhar no boot, a aplicação cai para
-SQLite local em silêncio, e os dados somem no próximo deploy. Abrir
-`/conversas/api/status` logado e conferir `"dialeto": "postgresql"`.
-
 ### 2.4 Conferência do banco depois do deploy das Fases 1 a 4
 O pacote `emalog-deploy-20260917-1049.zip` foi publicado em 17/09/2026.
 **Verificado de fora, sem login:** as rotas da Fase 4 existem, os arquivos
@@ -79,8 +109,8 @@ estáticos servidos são idênticos aos do repositório e o webhook da Twilio
 recusa chamada sem assinatura e aceita a assinada.
 
 **A verificar, com login de administrador:** abrir `/conversas/api/status` e
-conferir `"schema_ok": true` junto com o dialeto do item 2.3. Só isso prova que
-as migrações das Fases 2 e 3 rodaram no banco de produção.
+conferir `"schema_ok": true`. **Conferido em 17/09/2026:** `schema_ok` é
+`true`, mas o banco é SQLite; ver item 0.1.
 
 ### 2.5 Backfill do histórico
 Mensagens anteriores à Central ainda não estão agrupadas em conversas. Rodar no
