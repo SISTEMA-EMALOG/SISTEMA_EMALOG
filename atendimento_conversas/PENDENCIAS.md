@@ -72,12 +72,15 @@ que documentos coletados pelo EMA nem apareçam na ficha.
 SQLite local em silêncio, e os dados somem no próximo deploy. Abrir
 `/conversas/api/status` logado e conferir `"dialeto": "postgresql"`.
 
-### 2.4 Deploy das Fases 2 a 4
-**A verificar.** Na última conferência, a produção rodava a versão anterior ao
-envio pela Evolution. O pacote mais recente é
-`FONTE AWS RODANDO/emalog-deploy-20260917-1049.zip`, que já inclui as Fases 1
-a 4. Depois do deploy, `/conversas/api/status` deve mostrar `"schema_ok": true`,
-e o botão Relatórios deve aparecer para administrador em `/conversas`.
+### 2.4 Conferência do banco depois do deploy das Fases 1 a 4
+O pacote `emalog-deploy-20260917-1049.zip` foi publicado em 17/09/2026.
+**Verificado de fora, sem login:** as rotas da Fase 4 existem, os arquivos
+estáticos servidos são idênticos aos do repositório e o webhook da Twilio
+recusa chamada sem assinatura e aceita a assinada.
+
+**A verificar, com login de administrador:** abrir `/conversas/api/status` e
+conferir `"schema_ok": true` junto com o dialeto do item 2.3. Só isso prova que
+as migrações das Fases 2 e 3 rodaram no banco de produção.
 
 ### 2.5 Backfill do histórico
 Mensagens anteriores à Central ainda não estão agrupadas em conversas. Rodar no
