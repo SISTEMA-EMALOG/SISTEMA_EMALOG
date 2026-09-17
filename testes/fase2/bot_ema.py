@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from types import SimpleNamespace
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import _ambiente  # noqa: E402  trava de segurança, SEMPRE antes da app
 
 CHAVE = 'chave-de-teste-ema'

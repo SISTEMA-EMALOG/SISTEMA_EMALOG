@@ -5,11 +5,13 @@ Cada atendente é um test_client do Flask com sessão de login e token CSRF
 próprios. O provedor de WhatsApp é interceptado: nada sai da máquina.
 """
 import os
+import re
 import sys
 import threading
 import time
 from datetime import datetime
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import _ambiente  # noqa: E402  trava de segurança, SEMPRE antes da app
 
 import logging  # noqa: E402
@@ -292,7 +294,9 @@ r = A.get('/conversas/')
 html = r.get_data(as_text=True)
 check('tela responde 200', r.status_code == 200, f'HTTP {r.status_code}')
 check('abas Fila e Minhas presentes', 'data-aba="fila"' in html and 'data-aba="minhas"' in html)
-check('script da Fase 2 com versão nova', 'conversas.js' in html and '20260917-fase2' in html)
+# A versão muda a cada fase, para o navegador não servir cache velho. Confere
+# que ela existe, sem prender o teste a uma fase específica.
+check('script da Central com parâmetro de versão', re.search(r'conversas\.js\?v=\d{8}-', html) is not None)
 lst = A.get('/conversas/api/conversas?aba=minhas').get_json()
 check('aba Minhas lista as conversas de A', lst['aba'] == 'minhas' and lst['contagens']['minhas'] >= 1,
       f"contagem minhas={lst['contagens']['minhas']}")
