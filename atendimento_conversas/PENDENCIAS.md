@@ -28,10 +28,10 @@ Consequências:
 
 O que fazer:
 1. Não publicar outro deploy até resolver, se houver dados reais em produção.
-2. Criar um PostgreSQL persistente. Recomendado: Amazon RDS em `sa-east-1`,
-   na mesma VPC do ambiente.
-3. Definir `DATABASE_URL` nas propriedades de ambiente do Elastic Beanstalk.
-4. Depois de confirmar `"dialeto": "postgresql"`, fazer a aplicação recusar
+2. Criar um PostgreSQL persistente no Amazon RDS, em `sa-east-1`, e definir
+   `DATABASE_URL` no Elastic Beanstalk. O script `infra/aws/criar_banco_rds.sh`
+   faz os dois passos e deve ser rodado no AWS CloudShell.
+3. Depois de confirmar `"dialeto": "postgresql"`, fazer a aplicação recusar
    subir em SQLite quando estiver no Elastic Beanstalk. Hoje, se o PostgreSQL
    estiver fora do ar no boot, ela cai para SQLite vazio sem avisar ninguém.
 
