@@ -1,6 +1,6 @@
 # Pendências da Central de Atendimento
 
-Lista do que ficou para depois, levantada durante as Fases 0 a 3, em
+Lista do que ficou para depois, levantada durante as Fases 0 a 4, em
 17/09/2026. Cada item diz o que é, por que importa e o que fazer. Os itens
 marcados como **verificado** foram reproduzidos ou confirmados no código; os
 marcados como **a verificar** são suspeitas que ainda precisam de prova.
@@ -112,7 +112,8 @@ mensagem escapa da fila: um operador pode falar com o motorista sem assumir a
 conversa na Central.
 
 Nos dois casos, criar a `WhatsAppMessage` basta: o vínculo à conversa e o
-aviso em tempo real já acontecem sozinhos.
+aviso em tempo real já acontecem sozinhos. Enquanto isso não for feito, essas
+mensagens também ficam fora dos relatórios da Fase 4.
 
 ---
 
@@ -163,10 +164,32 @@ pelo EMA.
 - **Áudio e vídeo não são guardados** como anexo.
 - **`datetime.utcnow()`** está obsoleto a partir do Python 3.12 e aparece no
   sistema inteiro.
+- **Relatório calculado na aplicação.** `atendimento_conversas/utils/relatorios.py`
+  lê as mensagens do período e conta em Python, para não depender de função de
+  data de um banco só. O período vai até 92 dias e 300 mil mensagens; acima
+  disso a tela pede um intervalo menor, sem travar. Se o volume crescer a esse
+  ponto, guardar totais por dia numa tabela.
+- **Tempo de resposta em horas corridas.** Não desconta noite, fim de semana nem
+  feriado. A mediana suaviza, mas uma equipe que não atende de madrugada vai
+  ver médias altas.
 
 ---
 
-## 6. Twilio
+## 6. Relatórios — decisões
+
+### 6.1 Quem vê os relatórios
+Hoje só administrador. Decidir se o operador deve ver os próprios números.
+
+### 6.2 Números anteriores às fases
+**Verificado.** Assumidas, transferências e resolvidas só existem a partir do
+deploy da Fase 2, e respostas do bot só a partir da Fase 3. O backfill (2.5)
+agrupa mensagens antigas, mas não recria esse histórico, e as conversas criadas
+por ele contam como abertas no dia em que o script rodou. Para comparar
+períodos, usar datas posteriores ao deploy.
+
+---
+
+## 7. Twilio
 
 A conta é trial. O webhook de entrada pode ser configurado de graça, em Try
 out WhatsApp, Auto-Reply settings, Custom. Mas a API de envio em conta trial
@@ -176,16 +199,17 @@ configurar os dois webhooks e trocar `ATENDIMENTO_CANAL` para `twilio`.
 
 ---
 
-## 7. Validação manual ainda não feita
+## 8. Validação manual ainda não feita
 
 - Roteiro com dois atendentes simultâneos: `testes/fase2/LEIAME.md`.
 - Leitura, avisos, busca e anexos: `testes/fase3/LEIAME.md`.
+- Relatórios, CSV no Excel e bloqueio para operador: `testes/fase4/LEIAME.md`.
 - Ponta a ponta real pela Evolution em produção: mandar mensagem de um
   celular, ver na Central, responder e receber.
 
 ---
 
-## 8. Limpeza do repositório
+## 9. Limpeza do repositório
 
 - `EXTRAÇÃO REPLIT_ORIGINAL/` é a versão anterior à modularização, mantida
   como referência.
