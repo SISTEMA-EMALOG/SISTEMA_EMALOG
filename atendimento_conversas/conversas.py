@@ -29,7 +29,9 @@ from infraestrutura_critica.models import (
     CONVERSATION_STATUS_OPEN,
     CONVERSATION_STATUS_RESOLVED,
 )
-from atendimento_conversas.utils import anexos, eventos_mensagem, fila, providers, twilio_client
+from atendimento_conversas.utils import (
+    anexos, eventos_mensagem, fila, providers, relatorios, twilio_client,
+)
 from atendimento_conversas.utils.conversas_service import (
     avisar_conversa,
     conversa_para_entrada,
@@ -641,6 +643,61 @@ def ver_anexo(anexo_id):
         'X-Content-Type-Options': 'nosniff',
         'Content-Security-Policy': 'sandbox',
         'Cache-Control': 'private, max-age=300',
+    })
+
+
+# ── Relatórios (Fase 4) ──────────────────────────────────────────────────────
+
+def _somente_admin():
+    """
+    Relatório é de supervisão: mostra o desempenho de cada atendente. O
+    sistema não tem papel de supervisor, então fica restrito a admin.
+    """
+    return current_user.role == 'admin'
+
+
+@conversas_bp.route('/relatorios')
+@login_required
+def pagina_relatorios():
+    if not _somente_admin():
+        return _forbidden()
+    return render_template('conversas/relatorios.html',
+                           hoje=relatorios.hoje_local().isoformat(),
+                           max_dias=relatorios.MAX_DIAS)
+
+
+def _relatorio_do_pedido():
+    de, ate = relatorios.ler_periodo(request.args.get('de'), request.args.get('ate'))
+    return relatorios.gerar(de, ate)
+
+
+@conversas_bp.route('/api/relatorios')
+@login_required
+def api_relatorios():
+    if not _somente_admin():
+        return _forbidden()
+    try:
+        return jsonify(_relatorio_do_pedido())
+    except relatorios.PeriodoInvalido as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
+@conversas_bp.route('/api/relatorios.csv')
+@login_required
+def api_relatorios_csv():
+    if not _somente_admin():
+        return _forbidden()
+    tipo = request.args.get('tipo', 'atendentes')
+    if tipo not in ('atendentes', 'dias'):
+        return jsonify({'error': 'tipo deve ser atendentes ou dias.'}), 400
+    try:
+        rel = _relatorio_do_pedido()
+    except relatorios.PeriodoInvalido as exc:
+        return jsonify({'error': str(exc)}), 400
+    conteudo = relatorios.csv_atendentes(rel) if tipo == 'atendentes' else relatorios.csv_dias(rel)
+    nome = f"central-{tipo}-{rel['periodo']['de']}-a-{rel['periodo']['ate']}.csv"
+    return Response(conteudo, mimetype='text/csv', headers={
+        'Content-Disposition': f'attachment; filename="{nome}"',
     })
 
 

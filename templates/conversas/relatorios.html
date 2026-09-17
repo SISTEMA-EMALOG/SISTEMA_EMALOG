@@ -1,0 +1,146 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Relatórios da Central - EMALOG{% endblock %}
+{% block page_title %}Relatórios da Central de Atendimento{% endblock %}
+{% block page_description %}Volume, tempo de resposta e produção por atendente{% endblock %}
+
+{% block head %}
+<style>
+.panel{background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 1px 2px rgba(17,24,39,.03)}
+.kpi{padding:16px}
+.kpi .rotulo{font-size:12px;color:#6b7280}
+.kpi .valor{font-size:24px;font-weight:800;color:#111827;margin-top:2px;line-height:1.2}
+.kpi .detalhe{font-size:11px;color:#9ca3af;margin-top:2px}
+.tabela{width:100%;font-size:13px;border-collapse:collapse}
+.tabela th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;white-space:nowrap}
+.tabela td{padding:8px 10px;border-bottom:1px solid #f3f4f6;white-space:nowrap}
+.tabela td.num,.tabela th.num{text-align:right;font-variant-numeric:tabular-nums}
+.rolagem{overflow-x:auto}
+.preset.is-on{background:#111827;color:#fff}
+</style>
+{% endblock %}
+
+{% block header_actions %}
+<a href="{{ url_for('conversas.index') }}"
+   class="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold">
+  <i class="fas fa-arrow-left" aria-hidden="true"></i><span>Conversas</span>
+</a>
+{% endblock %}
+
+{% block content %}
+<div id="relApp" class="space-y-4" data-hoje="{{ hoje }}" data-max-dias="{{ max_dias }}">
+
+  <section class="panel p-4" aria-label="Período">
+    <form id="relForm" class="flex flex-wrap items-end gap-3">
+      <div>
+        <label for="relDe" class="block text-xs font-bold text-gray-600 mb-1">De</label>
+        <input id="relDe" type="date" class="border border-gray-300 rounded-lg px-3 py-2 text-sm" required>
+      </div>
+      <div>
+        <label for="relAte" class="block text-xs font-bold text-gray-600 mb-1">Até</label>
+        <input id="relAte" type="date" class="border border-gray-300 rounded-lg px-3 py-2 text-sm" required>
+      </div>
+      <div class="flex gap-1" role="group" aria-label="Períodos rápidos">
+        <button type="button" class="preset px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-xs font-bold" data-dias="1">Hoje</button>
+        <button type="button" class="preset px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-xs font-bold is-on" data-dias="7">7 dias</button>
+        <button type="button" class="preset px-3 py-2 rounded-lg bg-gray-100 text-gray-700 text-xs font-bold" data-dias="30">30 dias</button>
+      </div>
+      <button type="submit" id="relAplicar"
+              class="px-4 py-2 rounded-lg text-sm font-bold">Aplicar</button>
+      <div class="ml-auto flex gap-2">
+        <a id="relCsvAtendentes" href="#" class="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-xs font-semibold">
+          <i class="fas fa-file-csv" aria-hidden="true"></i> Atendentes
+        </a>
+        <a id="relCsvDias" href="#" class="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-xs font-semibold">
+          <i class="fas fa-file-csv" aria-hidden="true"></i> Dias
+        </a>
+      </div>
+    </form>
+    <p class="text-xs text-gray-400 mt-2">Datas no horário de São Paulo. Período máximo de {{ max_dias }} dias.</p>
+  </section>
+
+  <div id="relStatus" class="hidden rounded-lg border px-4 py-3 text-sm" role="status" aria-live="polite"></div>
+
+  <section class="grid grid-cols-2 lg:grid-cols-5 gap-3" aria-label="Resumo do período" id="relKpis">
+    <div class="panel kpi"><div class="rotulo">Mensagens recebidas</div><div class="valor" data-kpi="recebidas">—</div></div>
+    <div class="panel kpi"><div class="rotulo">Respostas de atendentes</div><div class="valor" data-kpi="enviadas_atendente">—</div><div class="detalhe" data-kpi="bot">—</div></div>
+    <div class="panel kpi"><div class="rotulo">Tempo de resposta, mediana</div><div class="valor" data-kpi="mediana">—</div><div class="detalhe" data-kpi="media">—</div></div>
+    <div class="panel kpi"><div class="rotulo">Esperas sem resposta</div><div class="valor" data-kpi="sem_resposta">—</div><div class="detalhe">contato escreveu e ninguém respondeu</div></div>
+    <div class="panel kpi"><div class="rotulo">Conversas abertas / resolvidas</div><div class="valor" data-kpi="abertas_resolvidas">—</div><div class="detalhe">no período</div></div>
+  </section>
+
+  <section class="panel p-4" aria-label="Situação agora">
+    <h3 class="text-sm font-extrabold text-gray-900 mb-2">Agora</h3>
+    <div class="flex flex-wrap gap-6 text-sm" id="relAgora">
+      <div><span class="text-gray-500">Ativas</span> <strong data-agora="ativas">—</strong></div>
+      <div><span class="text-gray-500">Esperando na fila</span> <strong class="text-red-600" data-agora="na_fila_humana">—</strong></div>
+      <div><span class="text-gray-500">Com atendente</span> <strong data-agora="com_atendente">—</strong></div>
+      <div><span class="text-gray-500">Com o EMA</span> <strong data-agora="com_ema">—</strong></div>
+    </div>
+  </section>
+
+  <section class="panel p-4" aria-label="Por atendente">
+    <h3 class="text-sm font-extrabold text-gray-900 mb-3">Por atendente</h3>
+    <div class="rolagem">
+      <table class="tabela">
+        <thead>
+          <tr>
+            <th>Atendente</th>
+            <th class="num">Conversas atendidas</th>
+            <th class="num">Mensagens enviadas</th>
+            <th class="num">Assumidas</th>
+            <th class="num">Recebidas por transferência</th>
+            <th class="num">Resolvidas</th>
+            <th class="num">Tempo mediano</th>
+            <th class="num">Tempo médio</th>
+            <th class="num">Respostas medidas</th>
+          </tr>
+        </thead>
+        <tbody id="relAtendentes"><tr><td colspan="9" class="text-gray-400">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel p-4" aria-label="Volume por dia">
+    <h3 class="text-sm font-extrabold text-gray-900 mb-3">Volume por dia</h3>
+    <div style="position:relative;height:260px"><canvas id="relGrafico" aria-label="Mensagens por dia" role="img"></canvas></div>
+  </section>
+
+  <section class="panel p-4" aria-label="Por semana">
+    <h3 class="text-sm font-extrabold text-gray-900 mb-3">Por semana</h3>
+    <div class="rolagem">
+      <table class="tabela">
+        <thead>
+          <tr>
+            <th>Semana</th>
+            <th class="num">Recebidas</th>
+            <th class="num">Atendentes</th>
+            <th class="num">Bot</th>
+            <th class="num">Automação</th>
+            <th class="num">Conversas abertas</th>
+            <th class="num">Resolvidas</th>
+          </tr>
+        </thead>
+        <tbody id="relSemanas"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <details class="panel p-4 text-sm text-gray-600">
+    <summary class="font-bold text-gray-900 cursor-pointer">Como os números são calculados</summary>
+    <ul class="list-disc pl-5 mt-3 space-y-1.5">
+      <li><strong>Espera</strong> começa na primeira mensagem do contato depois da última resposta. Várias mensagens seguidas do contato são uma espera só.</li>
+      <li><strong>Tempo de resposta</strong> vai do início da espera até a primeira resposta de um atendente, e conta para quem respondeu. A mediana é o valor do meio; a média é distorcida por uma espera longa na madrugada.</li>
+      <li><strong>Resposta do bot</strong> encerra a espera, mas não entra no tempo de nenhum atendente.</li>
+      <li><strong>Automação</strong> é mensagem com autor mas que não é conversa, como oferta de frete em massa. Não conta como resposta.</li>
+      <li><strong>Esperas sem resposta</strong> começaram no período e não tiveram resposta de atendente nem do bot até dois dias depois do fim do período.</li>
+      <li><strong>Assumidas, recebidas por transferência e resolvidas</strong> vêm do histórico da fila, que existe desde a Fase 2. Períodos anteriores aparecem zerados nessas colunas.</li>
+      <li>Conversas agrupadas pelo script de histórico aparecem como abertas no dia em que o script rodou.</li>
+    </ul>
+  </details>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/conversas_relatorios.js', v='20260917-fase4') }}"></script>
+{% endblock %}
