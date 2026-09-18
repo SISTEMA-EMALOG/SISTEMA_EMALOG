@@ -14,7 +14,7 @@ import re
 from datetime import datetime
 from types import SimpleNamespace
 
-from flask import Blueprint, Response, jsonify, render_template, request, url_for
+from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import func, or_, inspect as sa_inspect
 
@@ -718,8 +718,9 @@ def diagnostico():
     Confirma que o schema da Central existe DE FATO no banco em uso.
 
     O auto-migrator de utils/migrations.py engole falhas de DDL em log e segue
-    o boot, e se a conexão com o PostgreSQL falhar a app cai para um SQLite
-    local e continua de pé. Este endpoint responde às duas perguntas.
+    o boot, e fora do Elastic Beanstalk, se a conexão com o PostgreSQL falhar,
+    a app cai para um SQLite local e continua de pé. Este endpoint responde às
+    duas perguntas, e diz se a trava que impede esse SQLite está valendo.
     """
     if not _staff_only():
         return _forbidden()
@@ -746,6 +747,7 @@ def diagnostico():
         return jsonify({
             'success': True,
             'dialeto': db.engine.dialect.name,
+            'trava_sqlite': bool(current_app.config.get('EXIGE_POSTGRESQL')),
             'schema_ok': schema_ok,
             'tabela_conversations': tem_tabela,
             'tabela_conversation_events': 'conversation_events' in tabelas,

@@ -220,54 +220,6 @@ def note(bid_id):
     return jsonify({'ok': True})
 
 
-@contracting_bp.route('/api/chatwoot/sso')
-@login_required
-def chatwoot_sso():
-    """
-    Gera a URL do painel do Chatwoot pra embutir no iframe da aba Conversas.
-
-    Duas camadas, conforme o que estiver configurado no ambiente:
-      1. Login automático (SSO) via Platform API do Chatwoot — exige um
-         Platform App criado no Chatwoot (Super Admin → Platform Apps) e o
-         usuário interno mapeado a um agente do Chatwoot pelo e-mail.
-         Env vars: CHATWOOT_URL, CHATWOOT_PLATFORM_TOKEN
-      2. Sem CHATWOOT_PLATFORM_TOKEN configurado: cai para a URL pública da
-         caixa de entrada — quem acessar loga separadamente no Chatwoot
-         dentro do iframe (funciona, só não evita o login duplicado).
-    """
-    base_url = os.environ.get('CHATWOOT_URL', '').rstrip('/')
-    account_id = os.environ.get('CHATWOOT_ACCOUNT_ID', '')
-    inbox_id = os.environ.get('CHATWOOT_INBOX_ID', '')
-
-    if not base_url or not account_id:
-        return jsonify({'ok': False, 'error': 'Chatwoot ainda não configurado (CHATWOOT_URL / CHATWOOT_ACCOUNT_ID ausentes).'}), 503
-
-    dashboard_path = f'/app/accounts/{account_id}/dashboard'
-    if inbox_id:
-        dashboard_path = f'/app/accounts/{account_id}/inbox/{inbox_id}'
-
-    platform_token = os.environ.get('CHATWOOT_PLATFORM_TOKEN', '')
-    if platform_token:
-        try:
-            import requests
-            resp = requests.post(
-                f'{base_url}/platform/api/v1/users/{current_user.chatwoot_user_id}/login',
-                headers={'api_access_token': platform_token},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            sso_url = resp.json().get('url')
-            if sso_url:
-                return jsonify({'ok': True, 'url': sso_url})
-        except AttributeError:
-            pass  # current_user não tem chatwoot_user_id mapeado ainda
-        except Exception:
-            pass  # cai para o link público abaixo
-
-    return jsonify({'ok': True, 'url': f'{base_url}{dashboard_path}'})
-
-
-
 @login_required
 def conversations():
     if not _staff_only():

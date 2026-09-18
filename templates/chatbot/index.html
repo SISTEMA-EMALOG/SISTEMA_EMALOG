@@ -1,0 +1,121 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Chatbot - EMALOG{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-6">
+
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+      <i class="fas fa-bullhorn text-blue-600"></i> Chatbot de regras
+    </h1>
+    <p class="text-sm text-gray-500 mt-1">
+      Inicie o bot para um número de teste. Ele manda a mensagem de entrada e
+      abre a conversa; responda pelo WhatsApp para seguir o fluxo (identificação,
+      coleta mínima de cadastro e transferência para um atendente).
+    </p>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="mb-4 rounded-lg px-4 py-3 text-sm
+                    {{ 'bg-green-50 text-green-800 border border-green-200' if category == 'success'
+                       else 'bg-red-50 text-red-800 border border-red-200' }}">
+          {{ message }}
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <!-- Iniciar -->
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6">
+    <form method="POST" action="{{ url_for('chatbot.iniciar') }}"
+          class="flex flex-col sm:flex-row sm:items-end gap-3">
+      <div class="flex-1">
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          Número do motorista (com DDD)
+        </label>
+        <input type="text" name="telefone" required
+               placeholder="ex.: 11 99999-8888"
+               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm
+                      focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+      </div>
+      <button type="submit"
+              class="inline-flex items-center justify-center gap-2 rounded-lg
+                     bg-blue-600 px-5 py-2 text-sm font-medium text-white
+                     hover:bg-blue-700">
+        <i class="fas fa-paper-plane"></i> Iniciar chatbot
+      </button>
+    </form>
+    <p class="text-xs text-gray-400 mt-2">
+      O número precisa ter WhatsApp e a instância Evolution precisa estar no ar
+      (QR escaneado). Um número em opt-out ou com sessão já ativa não é reenviado.
+    </p>
+  </div>
+
+  <!-- Sessões -->
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="px-5 py-3 border-b border-gray-100">
+      <h2 class="text-sm font-semibold text-gray-700">Sessões recentes</h2>
+    </div>
+
+    {% if sessoes %}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-gray-500 text-xs uppercase">
+          <tr>
+            <th class="text-left px-5 py-2 font-medium">Número</th>
+            <th class="text-left px-5 py-2 font-medium">Motorista</th>
+            <th class="text-left px-5 py-2 font-medium">Estado</th>
+            <th class="text-left px-5 py-2 font-medium">Situação</th>
+            <th class="text-left px-5 py-2 font-medium">Atualizada</th>
+            <th class="text-right px-5 py-2 font-medium">Ação</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          {% for s in sessoes %}
+          {% set cor = {'ativa': 'bg-blue-100 text-blue-700',
+                        'handoff': 'bg-amber-100 text-amber-700',
+                        'encerrada': 'bg-gray-100 text-gray-600',
+                        'expirada': 'bg-gray-100 text-gray-600',
+                        'optout': 'bg-red-100 text-red-700'} %}
+          <tr class="hover:bg-gray-50">
+            <td class="px-5 py-2 font-mono text-gray-700">{{ s.telefone }}</td>
+            <td class="px-5 py-2 text-gray-700">{{ s.driver.name if s.driver else '—' }}</td>
+            <td class="px-5 py-2 text-gray-600">{{ s.estado }}</td>
+            <td class="px-5 py-2">
+              <span class="inline-block rounded-full px-2 py-0.5 text-xs font-medium
+                           {{ cor.get(s.status, 'bg-gray-100 text-gray-600') }}">
+                {{ s.status }}{% if s.motivo_fim %} · {{ s.motivo_fim }}{% endif %}
+              </span>
+            </td>
+            <td class="px-5 py-2 text-gray-500">
+              {{ s.updated_at.strftime('%d/%m %H:%M') if s.updated_at else (s.created_at.strftime('%d/%m %H:%M') if s.created_at else '—') }}
+            </td>
+            <td class="px-5 py-2 text-right">
+              {% if s.status == 'ativa' %}
+              <form method="POST" action="{{ url_for('chatbot.encerrar', sid=s.id) }}"
+                    onsubmit="return confirm('Encerrar esta sessão?');" class="inline">
+                <button type="submit"
+                        class="text-xs text-red-600 hover:text-red-800 hover:underline">
+                  Encerrar
+                </button>
+              </form>
+              {% else %}
+              <span class="text-xs text-gray-300">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="px-5 py-8 text-center text-sm text-gray-400">
+      Nenhuma sessão ainda. Inicie o chatbot para um número acima.
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

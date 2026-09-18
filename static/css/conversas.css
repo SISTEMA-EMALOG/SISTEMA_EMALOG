@@ -1,0 +1,30 @@
+/* Layout da Central de Atendimento. Fica em arquivo próprio porque o mesmo
+   painel aparece em dois lugares: na página /conversas e na aba Conversas da
+   Central de Contratação. O corpo do painel está em
+   templates/conversas/_painel.html. */
+.conv-layout{display:grid;grid-template-columns:minmax(260px,330px) minmax(360px,1fr) minmax(240px,300px);width:100%;height:clamp(540px,calc(100dvh - 250px),800px);min-height:0;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#fff}
+.conv-list,.conv-main,.conv-context{min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.conv-list{border-right:1px solid #e5e7eb;background:#fff}
+#convItems{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.conv-context{border-left:1px solid #e5e7eb;overflow-y:auto;overscroll-behavior:contain;background:#fff}
+.conv-scroller{flex:1;min-height:0;background:#f8fafc;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;overflow-wrap:anywhere;padding:18px}
+#convForm{flex:0 0 auto;background:#fff;border-top:1px solid #e5e7eb}
+#convInput{min-height:44px;max-height:120px;overflow-y:auto}
+.msg-in,.msg-out{overflow-wrap:anywhere;word-break:break-word;max-width:78%;padding:9px 13px;margin-bottom:9px;font-size:14px;line-height:1.5;white-space:pre-wrap}
+.msg-in{background:#fff;border:1px solid #e5e7eb;border-radius:4px 14px 14px 14px}
+.msg-out{background:#171717;color:#fff;border-radius:14px 4px 14px 14px;margin-left:auto}
+.conv-item{display:block;width:100%;text-align:left;padding:11px 14px;border-bottom:1px solid #f1f2f4;cursor:pointer;background:#fff}
+.conv-item:hover{background:#fafafa}
+.conv-item.is-active{background:#fff7f8;box-shadow:inset 3px 0 0 #e61d43}
+.status-pill{font-size:11px;font-weight:700;border-radius:999px;padding:3px 8px;white-space:nowrap}
+.conv-tab{border-bottom:2px solid transparent}
+.conv-tab.is-on{color:#e61d43;border-bottom-color:#e61d43}
+.acao{font-size:12px;font-weight:700;border-radius:8px;padding:6px 10px;white-space:nowrap}
+.skeleton{background:linear-gradient(90deg,#e8ebee 25%,#f5f6f7 50%,#e8ebee 75%);background-size:200% 100%;animation:sk 1.4s infinite}
+@keyframes sk{to{background-position:-200% 0}}
+/* Dentro da aba da Contratação sobra menos altura: o cabeçalho da página, as
+   abas e a barra do painel ficam acima dele. */
+.conv-embutido .conv-layout{height:clamp(520px,calc(100dvh - 330px),760px)}
+@media(max-width:1180px){.conv-layout{grid-template-columns:minmax(240px,290px) minmax(0,1fr)}.conv-context{display:none}}
+@media(max-width:700px){.conv-layout{display:flex;height:auto;flex-direction:column}.conv-list{border-right:0;border-bottom:1px solid #e5e7eb;max-height:300px}.conv-main{height:min(640px,calc(100dvh - 110px));min-height:500px}.conv-context{display:none}}
+@media(prefers-reduced-motion:reduce){.skeleton{animation:none}}

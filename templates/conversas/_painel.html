@@ -1,0 +1,114 @@
+{# Painel da Central de Atendimento.
+
+   Incluído em dois lugares, com os mesmos ids, porque é a mesma tela:
+     - templates/conversas/index.html, a página inteira;
+     - templates/contracting/index.html, na aba Conversas, junto do Kanban.
+
+   Quem dá vida a ele é static/js/conversas.js, que começa pelo #convApp e
+   sai fora se ele não existir. Nunca incluir duas vezes na mesma página: os
+   ids são únicos. O estilo está em static/css/conversas.css. #}
+<div class="flex flex-wrap items-center justify-end gap-2 mb-3">
+  {% if current_user.role == 'admin' %}
+  <a href="{{ url_for('conversas.pagina_relatorios') }}"
+     class="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold">
+    <i class="fas fa-chart-column" aria-hidden="true"></i><span>Relatórios</span>
+  </a>
+  {% endif %}
+  <button type="button" id="convSom"
+          class="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold"
+          aria-pressed="true" title="Ligar ou desligar o som de mensagem nova">
+    <i class="fas fa-volume-high" aria-hidden="true"></i><span>Som</span>
+  </button>
+  <button type="button" id="convNotif"
+          class="hidden inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold"
+          title="Receber aviso do navegador quando esta aba estiver em segundo plano">
+    <i class="fas fa-bell" aria-hidden="true"></i><span>Ativar avisos</span>
+  </button>
+  <button type="button" id="convRefresh"
+          class="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold">
+    <i class="fas fa-sync-alt" aria-hidden="true"></i><span>Atualizar</span>
+  </button>
+</div>
+
+<div id="convStatus" class="hidden rounded-lg border px-4 py-3 text-sm mb-4" role="status" aria-live="polite"></div>
+
+<div class="conv-layout" id="convApp" data-user-id="{{ current_user.id }}" data-user-role="{{ current_user.role }}">
+  <!-- Lista -->
+  <div class="conv-list">
+    <nav class="flex border-b border-gray-100 px-2 flex-shrink-0" id="convTabs" aria-label="Abas da fila">
+      <button type="button" class="conv-tab is-on px-3 py-2.5 text-xs font-bold text-gray-600" data-aba="fila">
+        Fila <span class="ml-1 inline-flex min-w-5 justify-center rounded-full bg-red-500 px-1.5 text-[11px] text-white hidden" data-contagem="fila">0</span>
+      </button>
+      <button type="button" class="conv-tab px-3 py-2.5 text-xs font-bold text-gray-600" data-aba="minhas">
+        Minhas <span class="ml-1 inline-flex min-w-5 justify-center rounded-full bg-gray-800 px-1.5 text-[11px] text-white hidden" data-contagem="minhas">0</span>
+      </button>
+      <button type="button" class="conv-tab px-3 py-2.5 text-xs font-bold text-gray-600" data-aba="ativas">Ativas</button>
+      <button type="button" class="conv-tab px-3 py-2.5 text-xs font-bold text-gray-600" data-aba="resolvidas">Resolvidas</button>
+      <button type="button" class="conv-tab px-3 py-2.5 text-xs font-bold text-gray-600" data-aba="todas">Todas</button>
+    </nav>
+    <div class="p-3 border-b border-gray-100 flex-shrink-0">
+      <label for="convSearch" class="sr-only">Buscar conversa</label>
+      <div class="relative">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" aria-hidden="true"></i>
+        <input id="convSearch" type="search" placeholder="Nome, motorista ou telefone, em qualquer formato"
+               class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm">
+      </div>
+    </div>
+    <div id="convItems">
+      <div class="p-3 space-y-2" id="convSkeleton">
+        <div class="skeleton h-14 rounded-lg"></div>
+        <div class="skeleton h-14 rounded-lg"></div>
+        <div class="skeleton h-14 rounded-lg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Thread -->
+  <div class="conv-main">
+    <header id="convHeader" class="px-4 py-3 border-b border-gray-100 flex-shrink-0">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <h2 id="convTitle" class="text-sm font-extrabold text-gray-900 truncate">Selecione uma conversa</h2>
+          <p id="convSubtitle" class="text-xs text-gray-500 truncate">A fila ao lado mostra quem está esperando atendimento.</p>
+          <p id="convOwner" class="text-xs mt-1 hidden"></p>
+        </div>
+        <span id="convStatusPill" class="status-pill bg-gray-100 text-gray-600 hidden"></span>
+      </div>
+      <div id="convActions" class="flex flex-wrap items-center gap-2 mt-2"></div>
+      <div id="convTransfer" class="hidden mt-2 flex flex-wrap items-center gap-2">
+        <label for="convTransferTo" class="text-xs font-bold text-gray-600">Transferir para</label>
+        <select id="convTransferTo" class="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"></select>
+        <button type="button" id="convTransferOk" class="acao bg-gray-900 text-white">Confirmar</button>
+        <button type="button" id="convTransferCancel" class="acao bg-gray-100 text-gray-700">Cancelar</button>
+      </div>
+    </header>
+
+    <div id="convLock" class="hidden border-b border-yellow-200 bg-yellow-50 px-4 py-2 text-xs text-yellow-900" role="status"></div>
+
+    <div class="conv-scroller" id="convMessages">
+      <div class="h-full flex flex-col items-center justify-center text-center text-gray-400">
+        <i class="fab fa-whatsapp text-4xl mb-3" aria-hidden="true"></i>
+        <p class="text-sm">Nenhuma conversa aberta.</p>
+      </div>
+    </div>
+
+    <form id="convForm" class="p-3 flex items-end gap-2">
+      <div class="flex-1">
+        <label for="convInput" class="sr-only">Mensagem</label>
+        <textarea id="convInput" rows="1" maxlength="2000" disabled
+                  placeholder="Selecione uma conversa para responder"
+                  class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-300"></textarea>
+      </div>
+      <button type="submit" id="convSend" disabled
+              class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full disabled:opacity-40"
+              title="Enviar" aria-label="Enviar mensagem">
+        <i class="fas fa-paper-plane text-sm" aria-hidden="true"></i>
+      </button>
+    </form>
+  </div>
+
+  <!-- Contexto -->
+  <aside class="conv-context" id="convContext" aria-label="Contexto do contato">
+    <div class="p-4 text-sm text-gray-400">Sem contato selecionado.</div>
+  </aside>
+</div>

@@ -71,12 +71,102 @@ def build_bid_message(freight, driver_name: str) -> str:
     return msg
 
 
+# ── Resposta direta a uma oferta de preço fechado ──────────────────────────
+#
+# A oferta enviada pela tela de seleção de motoristas fixa o valor e pede
+# "responda ACEITO ou RECUSO". Até 17/09/2026 ninguém lia essa resposta: ela
+# caía no extrator de preço abaixo, que não acha número nenhum e devolve o
+# card para "Conversando". Resolver aqui também torna a resposta imune a
+# `GROQ_API_KEY` ausente ou fora do ar.
+
+_RESPOSTA_ACEITE = re.compile(r'\b(aceito|aceita|aceitar|aceite)\b', re.IGNORECASE)
+_RESPOSTA_RECUSA = re.compile(r'\b(recuso|recusa|recusar|recuse)\b', re.IGNORECASE)
+_TEM_NUMERO = re.compile(r'\d')
+
+
+def _brl(valor: float) -> str:
+    """Formata em real brasileiro: 2500.0 -> 'R$ 2.500,00'."""
+    return f'R$ {valor:,.2f}'.replace(',', '#').replace('.', ',').replace('#', '.')
+
+
+def _valor_ofertado(bid):
+    """Valor que a oferta prometeu ao motorista, ou None se não houver."""
+    freight = getattr(bid, 'freight', None)
+    if freight is None:
+        return None
+    quote = getattr(freight, 'quote', None)
+    for valor in (freight.driver_cost,
+                  quote.driver_cost if quote else None,
+                  freight.agreed_price):
+        if valor:
+            try:
+                return float(valor)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _resposta_direta(bid, text: str) -> dict | None:
+    """Interpreta um ACEITO/RECUSO limpo, sem passar pelo Groq.
+
+    Devolve None quando a mensagem não é um dos dois — inclusive quando ela
+    traz número ("aceito por 3000"), que é contraproposta e precisa do
+    extrator de preço.
+    """
+    limpo = (text or '').strip()
+    if not limpo or _TEM_NUMERO.search(limpo):
+        return None
+
+    aceite = bool(_RESPOSTA_ACEITE.search(limpo))
+    recusa = bool(_RESPOSTA_RECUSA.search(limpo))
+    if aceite == recusa:  # nenhuma das duas, ou as duas na mesma frase
+        return None
+
+    nome = (getattr(bid, 'driver', None).name.split()[0]
+            if getattr(bid, 'driver', None) and bid.driver.name else 'motorista')
+
+    if recusa:
+        return {
+            'price': None, 'refused': True,
+            'reply': (f'Tudo bem, {nome}! Obrigado pelo retorno rápido. '
+                      f'Assim que surgir outro frete no seu perfil eu te aviso. 🚚\n\n_EMALOG_'),
+        }
+
+    valor = _valor_ofertado(bid)
+    if valor is None:
+        # Aceitou, mas a oferta não tem valor fechado: vira conversa para a
+        # equipe combinar o preço.
+        return {
+            'price': None, 'refused': False,
+            'reply': (f'Que bom, {nome}! Só me confirma o valor que você quer '
+                      f'para esse frete que eu repasso à equipe. 🙏\n\n_EMALOG_'),
+        }
+
+    return {
+        'price': valor, 'refused': False,
+        'reply': (f'Show, {nome}! Aceite registrado por {_brl(valor)}. '
+                  f'Nossa equipe confirma a contratação e passa os detalhes da '
+                  f'coleta em seguida. 🚚\n\n_EMALOG_'),
+    }
+
+
 def process_bid_response(bid, text: str, apply: bool = True) -> dict:
     """
-    Use Groq to extract price from driver's message.
+    Interpreta a resposta do motorista.
+
+    Um ACEITO ou RECUSO limpo é resolvido por `_resposta_direta`, sem rede.
+    Qualquer outra coisa vai para o Groq, que extrai o preço da frase.
     Returns {'price': float|None, 'refused': bool, 'reply': str}
     Updates bid in-place but does NOT commit.
     """
+    direta = _resposta_direta(bid, text)
+    if direta is not None:
+        logger.info(f"[BidAgent] Resposta direta na bid {bid.id}: "
+                    f"{'recusa' if direta['refused'] else 'aceite'}")
+        if apply:
+            apply_bid_result(bid, text, direta)
+        return direta
+
     system_prompt = (
         "Você é um assistente de logística da EMALOG que analisa respostas de motoristas "
         "em consultas de preço de frete via WhatsApp.\n\n"

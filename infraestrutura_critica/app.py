@@ -14,6 +14,12 @@ from datetime import datetime
 _log_level = logging.DEBUG if os.environ.get('FLASK_DEBUG') == '1' else logging.INFO
 logging.basicConfig(level=_log_level)
 
+# Pasta que o Elastic Beanstalk cria em toda instância. Onde ela existe, o
+# sistema não sobe em SQLite: o arquivo fica dentro da pasta da aplicação, que
+# o deploy seguinte substitui, e tudo o que fosse gravado nele se perderia.
+_MARCA_ELASTIC_BEANSTALK = "/opt/elasticbeanstalk"
+_TENTATIVAS_PG_ELASTIC_BEANSTALK = 10
+
 # ── Credenciais do administrador inicial ────────────────────────────────────
 # Não hardcoded no código — definidas via Variáveis de Ambiente do Elastic
 # Beanstalk (.ebextensions/session-secret.config). Se INITIAL_ADMIN_PASSWORD
@@ -83,9 +89,9 @@ def create_app():
             elif any(request.path.endswith(ext) for ext in ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp')):
                 response.headers['Cache-Control'] = 'public, max-age=86400'
         # Permit CDNs used by the app (Tailwind, FA, Chart.js, Socket.IO)
-        # frame-src inclui a instância do Chatwoot (aba Conversas embutida via iframe)
-        chatwoot_origin = os.environ.get('CHATWOOT_URL', '').rstrip('/')
-        frame_src = f"frame-src 'self' {chatwoot_origin};".strip()
+        # Nenhum iframe de terceiro: a aba Conversas da Contratação era do
+        # Chatwoot e hoje mostra a Central de Atendimento, do próprio sistema.
+        frame_src = "frame-src 'self';"
         politica = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' cdn.tailwindcss.com cdnjs.cloudflare.com cdn.jsdelivr.net unpkg.com; "
@@ -144,6 +150,7 @@ def create_app():
     # Configure database — priority order:
     #  1. DATABASE_URL env var (PostgreSQL gerenciado, ex: RDS)
     #  2. SQLite fallback (desenvolvimento / sem banco gerenciado configurado)
+    # No Elastic Beanstalk não há o passo 2: sem PostgreSQL o sistema não sobe.
     def _normalise_pg_url(url):
         """Ensure PostgreSQL URL has sslmode=require."""
         if url.startswith("postgres://"):
@@ -161,16 +168,42 @@ def create_app():
     sqlite_path = os.path.join(_project_root, "instance", "emalog.db")
     os.makedirs(os.path.dirname(sqlite_path), exist_ok=True)
     database_url = None
+    exige_postgresql = os.path.isdir(_MARCA_ELASTIC_BEANSTALK)
+    # Exposto em /conversas/api/status, para conferir em produção que a trava vale.
+    app.config["EXIGE_POSTGRESQL"] = exige_postgresql
 
     # 1. Try DATABASE_URL (normalise SSL)
     env_url = _normalise_pg_url(os.environ.get("DATABASE_URL", ""))
     if env_url.startswith("postgresql://"):
-        try:
-            _test_pg(env_url)
-            database_url = env_url
-            logging.info("✅ Banco: PostgreSQL via DATABASE_URL")
-        except Exception as e:
-            logging.warning(f"⚠️ DATABASE_URL inacessível ({e}). Usando SQLite.")
+        # Fora do Elastic Beanstalk, uma tentativa e cai para SQLite. Lá, o banco
+        # pode estar reiniciando: insiste por cerca de um minuto, abaixo do
+        # --timeout de 120 s do gunicorn no Procfile.
+        import time
+        tentativas = _TENTATIVAS_PG_ELASTIC_BEANSTALK if exige_postgresql else 1
+        for tentativa in range(1, tentativas + 1):
+            try:
+                _test_pg(env_url)
+                database_url = env_url
+                logging.info("✅ Banco: PostgreSQL via DATABASE_URL")
+                break
+            except Exception as e:
+                if not exige_postgresql:
+                    logging.warning(f"⚠️ DATABASE_URL inacessível ({e}). Usando SQLite.")
+                    break
+                logging.warning(f"⚠️ PostgreSQL inacessível (tentativa {tentativa}/{tentativas}): {e}")
+                if tentativa < tentativas:
+                    time.sleep(3)
+
+    if not database_url and exige_postgresql:
+        # Nunca incluir env_url na mensagem: ela leva a senha do banco.
+        if env_url.startswith("postgresql://"):
+            motivo = f"o PostgreSQL de DATABASE_URL não respondeu em {tentativas} tentativas"
+        else:
+            motivo = "DATABASE_URL está vazio ou não começa com postgresql://"
+        mensagem = (f"Elastic Beanstalk sem PostgreSQL: {motivo}. O sistema não sobe em "
+                    "SQLite aqui, porque o arquivo some a cada deploy.")
+        logging.critical(f"❌ {mensagem}")
+        raise RuntimeError(mensagem)
 
     # 2. SQLite fallback
     if not database_url:
@@ -178,7 +211,7 @@ def create_app():
         logging.warning(f"⚠️ Banco: SQLite local (fallback) — {sqlite_path}")
 
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
-    logging.info(f"🗄️ Banco: {'SQLite local' if 'sqlite' in database_url else 'PostgreSQL'}")
+    logging.info(f"🗄️ Banco: {'SQLite local' if database_url.startswith('sqlite:') else 'PostgreSQL'}")
 
     pg_options = {
         "pool_recycle": 300,
@@ -188,7 +221,7 @@ def create_app():
         "pool_timeout": 10,
     }
     sqlite_options = {"connect_args": {"check_same_thread": False}}
-    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlite_options if "sqlite" in database_url else pg_options
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlite_options if database_url.startswith("sqlite:") else pg_options
     app.config["UPLOAD_FOLDER"] = "uploads"
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB max file size
     app.config["ALLOWED_EXTENSIONS"] = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xlsx', 'xls'}
@@ -443,6 +476,15 @@ def create_app():
             blueprints_registered.append('conversas')
         except Exception as e:
             print(f"⚠️ Erro ao registrar conversas blueprint: {e}")
+            import traceback; traceback.print_exc()
+
+        # Chatbot de regras (Fase 5) — tela de operação/disparo
+        try:
+            from chatbot_regras.chatbot import chatbot_bp
+            app.register_blueprint(chatbot_bp)
+            blueprints_registered.append('chatbot')
+        except Exception as e:
+            print(f"⚠️ Erro ao registrar chatbot blueprint: {e}")
             import traceback; traceback.print_exc()
 
         # Demo Screenshots blueprint removido — routes/demo_screenshots.py não migrou

@@ -20,6 +20,9 @@ uploads/*
 # Versione somente o .example, com placeholders.
 .ebextensions/session-secret.config
 .env
+# Controle de rotação de credenciais. Não guarda valores, mas nomeia
+# o que está comprometido — não é assunto para repositório com remoto.
+SEGREDOS.md
 
 # Artefatos de build/deploy
 *.zip

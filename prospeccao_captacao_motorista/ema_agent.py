@@ -518,6 +518,63 @@ def _process_single_message(msg_data: dict):
     except Exception as bid_err:
         logger.warning(f"[EMA Webhook] Erro ao verificar bid: {bid_err}")
 
+    # ── Route 5: chatbot de regras (máquina de estados da Fase 5) ───────────
+    # Entra DEPOIS do EMA e da oferta, de propósito (seção 3 do FASE5_CHATBOT.md):
+    # quando a máquina manda o motorista ao EMA (estado 3), quem conduz a coleta
+    # é o EMA, e a máquina só reassume quando a EmaSession termina. Aqui, se
+    # chegamos até este ponto, não há sessão EMA nem oferta ativa.
+    #
+    # A máquina NÃO envia WhatsApp nem grava WhatsAppMessage: devolve os textos,
+    # e é AQUI que eles viram `send_text` + WhatsAppMessage(source='bot'). Sem
+    # esse source='bot'/direction='outbound', a resposta some da Central (defeito
+    # 3.1 do PENDENCIAS.md).
+    try:
+        from chatbot_regras import processar_mensagem_bot
+        resultado_bot = processar_mensagem_bot(
+            phone, text, conversa=conversa,
+            driver=driver_for_message, media=media_path,
+        )
+    except Exception as bot_err:
+        db.session.rollback()
+        logger.warning(f"[EMA Webhook] Erro na máquina do chatbot de regras: {bot_err}")
+        resultado_bot = None
+
+    if resultado_bot is not None:
+        from infraestrutura_critica.utils.evolution_api import send_text
+        envios_ok = True
+        for reply in resultado_bot.get('replies', []):
+            if not reply:
+                continue
+            ok = send_text(phone, reply)
+            envios_ok = envios_ok and ok
+            db.session.add(WhatsAppMessage(
+                driver_id=driver_for_message.id if driver_for_message else None,
+                phone_number=phone, message_content=reply,
+                direction='outbound', source='bot',
+                status='enviado' if ok else 'erro',
+                conversation_id=conversa.id if conversa is not None else None,
+            ))
+        # Handoff (estado [12] do contrato): a conversa entra na fila da Central
+        # como 'manual' e sem dono, para um atendente assumir. O bot já deixa de
+        # responder sozinho (a BotSession saiu de 'ativa'); isto garante que a
+        # conversa apareça para a equipe em vez de só ficar em silêncio.
+        houve_handoff = bool(resultado_bot.get('handoff'))
+        if houve_handoff and conversa is not None:
+            from atendimento_conversas.utils import fila
+            fila.escalar_para_humano(conversa.id)
+        inbound.status = 'processado' if envios_ok else 'erro'
+        inbound.response_at = datetime.utcnow()
+        db.session.commit()
+        if driver_for_message:
+            socketio.emit('contracting_conversation_update', {
+                'driver_id': driver_for_message.id,
+                **({'requires_manual_review': True} if houve_handoff else {}),
+            }, room='operators')
+        logger.info(
+            "[EMA Webhook] Chatbot de regras respondeu %s — status=%s handoff=%s",
+            phone, resultado_bot.get('status'), resultado_bot.get('handoff'))
+        return
+
     inbound.status = 'processado'
     inbound.response_at = datetime.utcnow()
     db.session.commit()

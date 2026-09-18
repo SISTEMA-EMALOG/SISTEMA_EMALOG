@@ -1,10 +1,11 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app
 from flask_login import login_required, current_user
-from infraestrutura_critica.models import Freight, Quote, Driver, Client, AuditLog, Payment, FreightStatusLog, DriverRating
-from infraestrutura_critica.app import db
+from infraestrutura_critica.models import (Freight, Quote, Driver, Client, AuditLog, Payment,
+                                           FreightStatusLog, DriverRating, DriverBid, EmaSession)
+from infraestrutura_critica.app import db, socketio
 from sqlalchemy import and_
 from sqlalchemy.orm import joinedload
-from execucao_entrega_frete.utils.whatsapp import send_freight_offer
+from execucao_entrega_frete.utils.whatsapp import send_freight_offer, generate_freight_message
 from datetime import datetime
 import uuid
 import json
@@ -261,20 +262,76 @@ def select_drivers(id):
                 d.id: d for d in Driver.query.filter(Driver.id.in_(driver_ids_int)).all()
             }
 
-            # Send WhatsApp offers
+            # Enviar as ofertas e abrir a demanda no Kanban de contratação.
+            # Cada oferta vira uma DriverBid: é ela, e só ela, que o quadro de
+            # /contracting lê. Até 17/09/2026 esta tela gravava apenas a
+            # WhatsAppMessage, e por isso a oferta nunca chegava ao Kanban.
             sent_count = 0
+            enviados = []
+            problemas = []
+            driver_ids_com_bid = []
+
             for did in driver_ids_int:
                 driver = selected_drivers_map.get(did)
-                if driver and driver.phone:
-                    try:
-                        send_freight_offer(freight, driver)
-                        sent_count += 1
-                    except Exception as e:
-                        flash(f'Erro ao enviar WhatsApp para {driver.name}: {str(e)}', 'warning')
-            
-            freight.whatsapp_sent = True
-            db.session.commit()
-            
+                if not driver:
+                    continue
+                if not driver.phone:
+                    problemas.append(f'{driver.name}: sem telefone cadastrado.')
+                    continue
+
+                # Mesmas travas da consulta de preço: não atropelar um cadastro
+                # da EMA em andamento nem abrir duas negociações com o mesmo
+                # motorista ao mesmo tempo.
+                active_ema = EmaSession.query.filter_by(driver_id=did).filter(
+                    EmaSession.status.in_(['pending', 'active', 'awaiting_file',
+                                           'awaiting_confirmation'])
+                ).first()
+                if active_ema:
+                    problemas.append(
+                        f'{driver.name}: finalize ou assuma a conversa de cadastro EMA antes da oferta.')
+                    continue
+
+                existing = DriverBid.query.filter_by(driver_id=did).filter(
+                    DriverBid.status.in_(['sent', 'responded', 'no_price'])
+                ).first()
+                if existing:
+                    problemas.append(f'{driver.name}: já possui uma negociação ativa.')
+                    continue
+
+                message_content = generate_freight_message(freight, driver)
+                agora = datetime.utcnow()
+                try:
+                    ok = send_freight_offer(freight, driver,
+                                            created_by=current_user.id,
+                                            message_content=message_content)
+                except Exception as e:
+                    logging.error(f"Erro ao enviar oferta para {driver.name}: {e}")
+                    ok = False
+
+                bid = DriverBid(
+                    freight_id=freight.id,
+                    driver_id=driver.id,
+                    status='sent',
+                    kanban_stage='awaiting_response',
+                    stage_changed_at=agora,
+                    history=[{'role': 'ema', 'text': message_content,
+                              'ts': agora.isoformat()}],
+                    sent_at=agora,
+                )
+                if ok:
+                    sent_count += 1
+                    enviados.append(driver.name)
+                else:
+                    bid.status = 'failed'
+                    bid.kanban_stage = 'closed'
+                    bid.closed_reason = 'Falha ao enviar a oferta pelo WhatsApp.'
+                    problemas.append(f'{driver.name}: falha no envio pelo WhatsApp.')
+                db.session.add(bid)
+                driver_ids_com_bid.append(driver.id)
+
+            # Só marca o frete como ofertado por WhatsApp se alguma mensagem saiu.
+            freight.whatsapp_sent = sent_count > 0
+
             # Audit log
             audit = AuditLog(
                 user_id=current_user.id,
@@ -286,10 +343,23 @@ def select_drivers(id):
             )
             db.session.add(audit)
             db.session.commit()
-            
-            drivers_list = [d.name for d in selected_drivers_map.values()]
-            
-            flash(f'Ofertas WhatsApp enviadas para {sent_count} motoristas: {", ".join(drivers_list)}', 'success')
+
+            if driver_ids_com_bid:
+                socketio.emit('contracting_update',
+                              {'freight_id': freight.id}, room='operators')
+                socketio.emit('contracting_conversation_update',
+                              {'driver_ids': driver_ids_com_bid}, room='operators')
+
+            if sent_count:
+                flash(f'Ofertas enviadas para {sent_count} motorista(s): '
+                      f'{", ".join(enviados)}. As demandas estão na Central de '
+                      f'contratação, em "Aguardando resposta".', 'success')
+            else:
+                flash('Nenhuma oferta foi enviada. Confira a conexão do WhatsApp '
+                      'em Central de contratação > Cadastros EMA.', 'error')
+            for problema in problemas:
+                flash(problema, 'warning')
+
             return redirect(url_for('freight.sent_offers', id=freight.id))
             
         except Exception as e:
@@ -307,7 +377,6 @@ def select_drivers(id):
     # Generate message preview with sample driver
     sample_driver = drivers[0] if drivers else None
     if sample_driver:
-        from execucao_entrega_frete.utils.whatsapp import generate_freight_message
         message_preview = generate_freight_message(freight, sample_driver)
     else:
         message_preview = "Nenhum motorista encontrado para preview da mensagem."
@@ -1026,116 +1095,76 @@ def reassign_driver(freight_id, driver_id):
 @freight_bp.route('/<int:freight_id>/assign-to-driver/<int:driver_id>', methods=['POST'])
 @login_required
 def assign_to_driver(freight_id, driver_id):
-    """Assign a driver to a freight and create automatic 70%/30% payment schedule"""
+    """Contrata um motorista para o frete, com o cronograma 70%/30%.
+
+    Quem contrata é `contract_bid`, o mesmo caminho da Central de contratação:
+    além de atribuir o motorista, gerar os pagamentos e registrar os logs, ela
+    move o card no Kanban e encerra as outras ofertas do mesmo frete. Até
+    17/09/2026 esta rota fazia tudo por conta própria e nunca tocava na
+    DriverBid, e por isso o frete aceito aqui não aparecia no quadro.
+    """
+    from kanban_contratacao.utils.contracting_service import contract_bid
+
+    if current_user.role not in ['admin', 'operador', 'vendedor']:
+        return jsonify({'success': False, 'message': 'Acesso negado.'}), 403
+
+    freight = Freight.query.get_or_404(freight_id)
+    driver = Driver.query.get_or_404(driver_id)
+
+    # Valor acordado: o que o operador digitou, senão o que já está no frete,
+    # senão o custo de motorista da cotação, senão 80% do valor combinado.
+    data = request.get_json(silent=True) or {}
+    driver_cost_input = data.get('driver_cost')
+    if driver_cost_input not in (None, ''):
+        payment_value = driver_cost_input
+    elif freight.driver_cost:
+        payment_value = freight.driver_cost
+    elif freight.quote_id:
+        quote = Quote.query.get(freight.quote_id)
+        payment_value = (quote.driver_cost if quote and quote.driver_cost
+                         else (freight.agreed_price or 0) * 0.8)
+    else:
+        payment_value = (freight.agreed_price or 0) * 0.8
+
     try:
-        if current_user.role not in ['admin', 'operador', 'vendedor']:
-            return jsonify({'success': False, 'message': 'Acesso negado.'}), 403
-
-        freight = Freight.query.get_or_404(freight_id)
-        driver = Driver.query.get_or_404(driver_id)
-
-        if freight.assigned_driver_id:
-            return jsonify({'success': False, 'message': 'Frete já está atribuído a outro motorista.'}), 400
-
-        # Accept driver_cost from request body (operator enters the agreed value)
-        data = request.get_json(silent=True) or {}
-        driver_cost_input = data.get('driver_cost')
-
-        if driver_cost_input:
-            try:
-                payment_value = float(str(driver_cost_input).replace(',', '.'))
-            except (ValueError, TypeError):
-                return jsonify({'success': False, 'message': 'Valor do motorista inválido.'}), 400
-        elif freight.driver_cost:
-            payment_value = freight.driver_cost
-        elif freight.quote_id:
-            from infraestrutura_critica.models import Quote
-            q = Quote.query.get(freight.quote_id)
-            payment_value = q.driver_cost if q and q.driver_cost else freight.agreed_price * 0.8
-        else:
-            payment_value = freight.agreed_price * 0.8
-
-        # Update freight
-        freight.assigned_driver_id = driver_id
-        freight.driver_cost = payment_value
-        freight.status = 'aceito'
-
-        # Marcar motorista como em frete
-        driver.availability_status = 'em_frete'
-
-        # Log de status
-        assign_log = FreightStatusLog(
-            freight_id=freight_id,
-            old_status='ofertado',
-            new_status='aceito',
-            notes=f'Motorista {driver.name} atribuído. Custo: R$ {payment_value:.2f}',
-            changed_by=current_user.id
-        )
-        db.session.add(assign_log)
-
-        today = datetime.now().date()
-        pickup = freight.pickup_date or today
-        delivery = freight.delivery_date or pickup
-
-        value_70 = round(payment_value * 0.70, 2)
-        value_30 = round(payment_value - value_70, 2)
-
-        # Payment 1: 70% on loading (due at pickup)
-        payment_70 = Payment(
-            driver_id=driver_id,
-            freight_id=freight_id,
-            payment_type='carregamento_70',
-            amount=value_70,
-            description=f'70% carregamento — Frete {freight.freight_number}',
-            status='pendente',
-            milestone='carregamento',
-            due_date=pickup,
-            payment_date=pickup,
-            created_by=current_user.id
-        )
-
-        # Payment 2: 30% on delivery (due at delivery)
-        payment_30 = Payment(
-            driver_id=driver_id,
-            freight_id=freight_id,
-            payment_type='finalizacao_30',
-            amount=value_30,
-            description=f'30% finalização — Frete {freight.freight_number}',
-            status='pendente',
-            milestone='finalizacao',
-            due_date=delivery,
-            payment_date=delivery,
-            created_by=current_user.id
-        )
-
-        db.session.add(payment_70)
-        db.session.add(payment_30)
-
-        audit = AuditLog(
-            user_id=current_user.id,
-            action='UPDATE',
-            table_name='freights',
-            record_id=freight.id,
-            old_values='Motorista: não atribuído',
-            new_values=(
-                f'Motorista: {driver.name} (ID: {driver.id}). '
-                f'Pagamentos criados: 70% R$ {value_70:.2f} (carregamento) + '
-                f'30% R$ {value_30:.2f} (finalização)'
+        bid = (DriverBid.query
+               .filter_by(freight_id=freight_id, driver_id=driver_id)
+               .order_by(DriverBid.created_at.desc())
+               .first())
+        if bid is None:
+            # Contratação fora do fluxo de oferta — atribuição direta pela
+            # ficha do frete. Abre a demanda para que ela exista no Kanban.
+            agora = datetime.utcnow()
+            bid = DriverBid(
+                freight_id=freight_id, driver_id=driver_id,
+                status='responded', kanban_stage='interested',
+                stage_changed_at=agora, sent_at=agora, responded_at=agora,
+                history=[], kanban_history=[],
             )
-        )
-        db.session.add(audit)
+            db.session.add(bid)
+            db.session.flush()
+
+        contract_bid(bid, current_user.id, payment_value)
         db.session.commit()
-
-        return jsonify({
-            'success': True,
-            'message': (
-                f'Motorista {driver.name} atribuído! '
-                f'Pagamentos criados: R$ {value_70:.2f} (70% carregamento) + '
-                f'R$ {value_30:.2f} (30% finalização).'
-            )
-        })
-
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 400
     except Exception as e:
         db.session.rollback()
-        logging.error(f"Erro ao atribuir motorista: {str(e)}")
-        return jsonify({'success': False, 'message': f'Erro ao atribuir frete: {str(e)}'}), 500
+        logging.error(f"Erro ao atribuir motorista: {e}")
+        return jsonify({'success': False, 'message': f'Erro ao atribuir frete: {e}'}), 500
+
+    socketio.emit('contracting_update',
+                  {'freight_id': freight.id, 'bid_id': bid.id, 'stage': 'contracted'},
+                  room='operators')
+
+    value_70 = round(float(freight.driver_cost) * 0.70, 2)
+    value_30 = round(float(freight.driver_cost) - value_70, 2)
+    return jsonify({
+        'success': True,
+        'message': (
+            f'Motorista {driver.name} contratado! '
+            f'Pagamentos criados: R$ {value_70:.2f} (70% carregamento) + '
+            f'R$ {value_30:.2f} (30% finalização).'
+        )
+    })

@@ -9,56 +9,77 @@ Ao resolver um item, apague-o daqui no mesmo commit da correção.
 
 ---
 
-## 0. Urgente — produção sem banco persistente
+## 0. Urgente — produção
 
-### 0.1 Produção roda em SQLite e perde tudo a cada deploy
-**Verificado em 17/09/2026**, por `/conversas/api/status` em produção:
-`"dialeto": "sqlite"`. Nenhuma configuração define `DATABASE_URL`: o
-`.ebextensions/session-secret.config` não tem a chave e o `.env` a deixa em
-branco. Sem ela, `infraestrutura_critica/app.py` usa `instance/emalog.db`
-dentro da pasta da aplicação, que o Elastic Beanstalk substitui a cada deploy.
+### 0.1 Publicar a trava contra SQLite
+O banco de produção já é o PostgreSQL `emalog-db`, no RDS, criado por
+`infra/aws/criar_banco_rds.sh`. **Conferido em 17/09/2026** em
+`/conversas/api/status`: `"dialeto": "postgresql"` e `"schema_ok": true`. O
+que ficou no SQLite antigo não foi copiado.
 
-Consequências:
-- Tudo o que foi cadastrado em produção entre dois deploys se perdeu no deploy
-  seguinte. Isso já acontecia antes da Central: o zip original levava um banco
-  vazio, num caminho que a aplicação nem lê.
-- O backup diário grava em `backups/`, na mesma pasta, e se perde junto. O
-  destino externo, `PRIVATE_OBJECT_DIR`, é do Replit e não existe na AWS.
-- Com mais de uma instância, cada uma teria um banco diferente.
+O código já recusa subir em SQLite no Elastic Beanstalk, com teste em
+`testes/producao/`, mas isso ainda não foi publicado. O pacote é o
+`emalog-deploy-20260917-1440.zip`. Até o deploy, se o
+PostgreSQL não responder em 3 segundos no boot, a produção sobe com um SQLite
+vazio sem avisar. Depois do deploy, conferir `"trava_sqlite": true` em
+`/conversas/api/status`.
 
-O que fazer:
-1. Não publicar outro deploy até resolver, se houver dados reais em produção.
-2. Criar um PostgreSQL persistente no Amazon RDS, em `sa-east-1`, e definir
-   `DATABASE_URL` no Elastic Beanstalk. O script `infra/aws/criar_banco_rds.sh`
-   faz os dois passos e deve ser rodado no AWS CloudShell.
-3. Depois de confirmar `"dialeto": "postgresql"`, fazer a aplicação recusar
-   subir em SQLite quando estiver no Elastic Beanstalk. Hoje, se o PostgreSQL
-   estiver fora do ar no boot, ela cai para SQLite vazio sem avisar ninguém.
+### 0.2 Senha do banco de produção enviada por chat
+**Verificado.** A linha `DATABASE_URL` completa, com a senha do `emalog-db`,
+apareceu num print enviado a uma conversa.
 
-### 0.2 Servidor da Evolution fora do ar
-**Verificado em 17/09/2026.** `evolution-evolution.iqutxq.easypanel.host`
-(191.101.235.249) não aceita conexão nas portas 80 e 443, nem a partir da AWS
-nem a partir de fora. É o servidor ou o firewall dele, não o código. Enquanto
-isso, nenhuma mensagem sai pela Central nem pelo EMA, e o webhook de entrada
-também não chega. Conferir o servidor no painel do Easypanel.
+O controle das credenciais comprometidas passou a ficar em **`SEGREDOS.md`**,
+na raiz do projeto, fora do git e fora do zip de deploy. Lá está a lista do que
+vazou, o procedimento de troca de cada uma e a tabela para registrar o que já
+foi rotacionado. O passo a passo desta é a seção 3.1.
+
+### 0.3 Terminar a troca para a Evolution própria
+O servidor de terceiros `evolution-evolution.iqutxq.easypanel.host`
+(191.101.235.249) caiu em 17/09/2026 e não voltou. O dono dele teve acesso à
+sessão do WhatsApp da empresa e à `EVOLUTION_API_KEY` antiga, que o
+`/ema/webhook` aceita como autenticação.
+
+**Feito em 17/09/2026:** `infra/aws/criar_evolution_ec2.sh` rodou até o fim no
+CloudShell. A Evolution 2.4.0 está no ar no EC2 `emalog-evolution`
+(`i-0b0fe70df387622f7`), acessível só pelo sistema, com os dados no banco
+`evolution` dentro do `emalog-db`. A conta da Evolution Foundation foi ativada
+e a porta do painel, fechada. A instância `emalog` foi criada e o ambiente
+`SistemaEmalog-env` ficou `Ready`/`Green` apontando para
+`http://172.31.16.200:8080`.
+
+**Feito em 18/09/2026:** o QR code foi escaneado e a instância `emalog` está
+conectada. O sistema recebe e envia mensagem pela Evolution própria. A troca
+para o servidor próprio está concluída.
+
+O que falta:
+1. Trocar a `EVOLUTION_API_KEY`, que vazou num print. O procedimento está em
+   `SEGREDOS.md`, seção 3.2. Agora que o WhatsApp está conectado, a troca tem
+   um cuidado a mais: a sessão fica no banco `evolution` e deve sobreviver,
+   mas confirmar logo depois em Cadastros EMA, e fazer num horário em que
+   alguém possa escanear de novo se cair.
+2. No celular da empresa, remover de Aparelhos conectados toda sessão
+   desconhecida, inclusive a do servidor antigo. O dono do servidor de
+   terceiros teve acesso à sessão do WhatsApp da empresa — enquanto essa
+   limpeza não for feita, ele pode continuar lendo as conversas.
+3. Conferir se o `.env` e o `session-secret.config` estão com as três linhas
+   `EVOLUTION_*` que o script imprimiu no fim.
 
 ---
 
 ## 1. Segurança — resolver primeiro
 
-### 1.1 Segredos vazados no histórico do git
-**Verificado.** Os commits `22772a5` e `1646e5c` contêm o
-`.ebextensions/session-secret.config` com valores reais, num repositório que
-tem remoto. Tirar o arquivo do versionamento não desfaz o que já foi enviado.
+### 1.1 Credenciais comprometidas — ver `SEGREDOS.md`
+**Verificado.** Cinco credenciais estão comprometidas: três pelo histórico do
+git, nos commits `22772a5` e `1646e5c`, e duas por print enviado em conversa.
 
-Rotacionar: `SESSION_SECRET`, `INITIAL_ADMIN_PASSWORD`, `EVOLUTION_API_KEY`.
-Depois, atualizar `.env` e `.ebextensions/session-secret.config`, que estão
-fora do git.
+O acompanhamento saiu daqui e ganhou documento próprio: **`SEGREDOS.md`**, na
+raiz do projeto, fora do git e fora do zip de deploy. Ele traz a situação de
+cada credencial, o procedimento de troca de cada uma e a tabela de registro do
+que já foi rotacionado. Não guarda nenhum valor, de propósito.
 
-### 1.2 Token da Twilio enviado por chat
-**Verificado.** `TWILIO_AUTH_TOKEN` passou por uma conversa e deve ser
-considerado comprometido. Rotacionar no console da Twilio, em Account, API
-keys & tokens.
+Resumo do que está pendente de rotação: `SESSION_SECRET`,
+`INITIAL_ADMIN_PASSWORD`, `EVOLUTION_API_KEY`, `TWILIO_AUTH_TOKEN` e a senha do
+banco em `DATABASE_URL`.
 
 ### 1.3 Ambiente sem HTTPS
 **Verificado.** A porta 443 do ambiente
@@ -102,25 +123,6 @@ a cada deploy.
 usa chaves relativas ao diretório do projeto via `storage.get_file`. É possível
 que documentos coletados pelo EMA nem apareçam na ficha.
 
-### 2.4 Conferência do banco depois do deploy das Fases 1 a 4
-O pacote `emalog-deploy-20260917-1049.zip` foi publicado em 17/09/2026.
-**Verificado de fora, sem login:** as rotas da Fase 4 existem, os arquivos
-estáticos servidos são idênticos aos do repositório e o webhook da Twilio
-recusa chamada sem assinatura e aceita a assinada.
-
-**A verificar, com login de administrador:** abrir `/conversas/api/status` e
-conferir `"schema_ok": true`. **Conferido em 17/09/2026:** `schema_ok` é
-`true`, mas o banco é SQLite; ver item 0.1.
-
-### 2.5 Backfill do histórico
-Mensagens anteriores à Central ainda não estão agrupadas em conversas. Rodar no
-servidor, primeiro simulando:
-
-```
-python3 scripts/backfill_conversations.py --dry-run
-python3 scripts/backfill_conversations.py
-```
-
 ### 2.6 Configuração regional do banco de produção
 **Verificado em teste local.** Com locale `C`, a busca não iguala `JOÃO` a
 `João`. Rodar `SHOW lc_ctype;` no PostgreSQL de produção para saber se isso
@@ -159,14 +161,21 @@ mensagens também ficam fora dos relatórios da Fase 4.
 dono do motorista sem passar pela disputa no banco da Fase 2. Nenhuma tela as
 chama hoje. Decidir: remover, ou fazer passarem por `atendimento_conversas/utils/fila.py`.
 
-A função `conversations()` do mesmo arquivo não tem decorador de rota; é
-código morto.
+Junto delas ficou código morto: a função `conversations()`, sem decorador de
+rota, e a coluna `users.chatwoot_user_id`, que ninguém mais lê desde a saída
+do Chatwoot.
 
-### 4.2 Aba Conversas da Contratação ainda abre o Chatwoot
-**Verificado.** A aba abre o Chatwoot em janela, e `app.py` libera o domínio
-dele na política de segurança. O plano previa a Central substituindo o
-Chatwoot. Trocar a aba por um link para `/conversas` e, depois de validado,
-retirar `CHATWOOT_*` e o `frame-src`.
+### 4.2 Restos do Chatwoot fora do código
+**Feito em 17/09/2026:** a aba Conversas da Contratação mostra o painel da
+Central de Atendimento, o `frame-src` voltou a ser só `'self'`, a rota
+`/contracting/api/chatwoot/sso` foi apagada e as chaves `CHATWOOT_*` saíram do
+`.ebextensions`. Teste em `testes/painel_conversas/`.
+
+O que falta, quando for cômodo: apagar `CHATWOOT_URL` e `CHATWOOT_ACCOUNT_ID`
+das variáveis do ambiente, em Elastic Beanstalk > Configuração > Atualizações,
+monitoramento e registro. O sistema já as ignora. E desligar o servidor do
+Chatwoot, em `18.228.138.222`, se ele ainda estiver de pé e não servir a mais
+nada: é custo de EC2 todo mês.
 
 ### 4.3 Duas normalizações de telefone
 **Verificado.** O EMA localiza motorista e sessão com `normalize_phone`, de
@@ -174,6 +183,39 @@ retirar `CHATWOOT_*` e o `frame-src`.
 por prefixo e erra todo número do DDD 55. A Central usa `normalize_contact_key`,
 que decide por comprimento. Motoristas de DDD 55 podem não ser reconhecidos
 pelo EMA.
+
+### 4.4 Envio simulado quando a Evolution não está configurada
+**Verificado.** `send_text`, em
+`infraestrutura_critica/utils/evolution_api.py`, devolve `True` e só escreve no
+log quando `EVOLUTION_API_URL` ou `EVOLUTION_API_KEY` estão vazias. É proposital
+para desenvolvimento, mas é a mesma armadilha que fazia a tela de oferta de
+frete dizer "enviado" sem enviar: numa máquina sem essas variáveis, qualquer
+envio parece ter dado certo.
+
+Em produção as duas estão preenchidas, então isso não afeta o ambiente hoje.
+Decidir se vale separar o modo simulado numa variável própria, como
+`EVOLUTION_SIMULAR=1`, para que a ausência de configuração vire erro.
+
+### 4.5 Valor em formato americano nas mensagens de frete
+A oferta gerada por `generate_freight_message`, em
+`execucao_entrega_frete/utils/whatsapp.py`, usa `f'{valor:,.2f}'` e manda
+"R$ 2,500.00" para o motorista, com a vírgula e o ponto trocados para quem lê
+em português. O mesmo acontece na resposta de
+`/freight/<id>/assign-to-driver/`. A confirmação de aceite já usa `_brl`, em
+`oferta_frete_motorista/utils/driver_bid_agent.py`, que formata certo. Trocar
+nos outros dois lugares quando for cômodo.
+
+### 4.6 Trocar motorista não mexe no Kanban
+**Verificado.** `reassign_driver`, em `execucao_entrega_frete/freight.py`,
+troca o motorista do frete, cancela os pagamentos do antigo e cria os do novo,
+mas não toca em nenhuma `DriverBid`. Depois de uma troca, o quadro de
+contratação continua mostrando o motorista antigo em "Contratados" e o novo
+não aparece em lugar nenhum.
+
+É o mesmo defeito que `assign_to_driver` tinha e que foi corrigido em
+18/09/2026, passando a contratação por `contract_bid`. A troca precisa de um
+caminho equivalente: encerrar a bid do motorista antigo com motivo e contratar
+a do novo. O botão fica na ficha do frete, em "Trocar motorista".
 
 ---
 
@@ -213,13 +255,6 @@ pelo EMA.
 
 ### 6.1 Quem vê os relatórios
 Hoje só administrador. Decidir se o operador deve ver os próprios números.
-
-### 6.2 Números anteriores às fases
-**Verificado.** Assumidas, transferências e resolvidas só existem a partir do
-deploy da Fase 2, e respostas do bot só a partir da Fase 3. O backfill (2.5)
-agrupa mensagens antigas, mas não recria esse histórico, e as conversas criadas
-por ele contam como abertas no dia em que o script rodou. Para comparar
-períodos, usar datas posteriores ao deploy.
 
 ---
 

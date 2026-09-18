@@ -248,6 +248,46 @@ def _migrate_central_atendimento(engine) -> None:
     log.info("✅ Migration Central de Atendimento verificada.")
 
 
+def _migrate_chatbot_regras(engine) -> None:
+    """
+    Fase 5 — chatbot de regras. Roda nos DOIS bancos, antes do gate.
+
+    As tabelas novas (bot_sessoes, bot_campanhas, bot_contatos,
+    bot_reservas_frete, bot_interesses_regiao, bot_optouts) são criadas pelo
+    db.create_all() e não aparecem aqui. Só entram as colunas acrescentadas a
+    tabelas que já existem, e os índices que o create_all não sabe declarar.
+    """
+    # Oferta de valor fechado: barra o agente de negociação.
+    _ensure_column_dual_dialect(engine, 'driver_bids', 'preco_fixo', 'BOOLEAN')
+
+    # Travas da reoferta a motorista já conhecido.
+    _ensure_column_dual_dialect(engine, 'drivers', 'bot_ultima_oferta_em', 'TIMESTAMP')
+    _ensure_column_dual_dialect(engine, 'drivers', 'bot_ofertas_ignoradas', 'INTEGER')
+    _ensure_column_dual_dialect(engine, 'drivers', 'bot_pausado', 'BOOLEAN')
+
+    # Um telefone só pode ter UMA sessão de bot em andamento. Mesma técnica do
+    # índice de conversa ativa, logo acima: índice parcial único, com a mesma
+    # sintaxe em SQLite (>= 3.8) e PostgreSQL (>= 9.0). Sem ele, dois webhooks
+    # concorrentes abrem duas máquinas de estado para o mesmo número e o
+    # motorista recebe a conversa em dobro.
+    _ensure_index_dual_dialect(
+        engine,
+        'bot_sessoes.telefone (ativa)',
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_bot_sessoes_ativa "
+        "ON bot_sessoes (telefone) WHERE status = 'ativa'"
+    )
+
+    # Contagem de vagas do frete: lida a cada busca de carga e a cada reserva.
+    _ensure_index_dual_dialect(
+        engine,
+        'bot_reservas_frete.freight_id + status',
+        'CREATE INDEX IF NOT EXISTS idx_bot_reservas_frete_status '
+        'ON bot_reservas_frete (freight_id, status)'
+    )
+
+    log.info("✅ Migration Chatbot de regras verificada.")
+
+
 def run_migrations(db) -> None:
     """
     Ponto de entrada principal.
@@ -257,6 +297,9 @@ def run_migrations(db) -> None:
 
     # ── Central de Atendimento: roda nos DOIS bancos, antes do gate ─────────
     _migrate_central_atendimento(engine)
+
+    # ── Chatbot de regras (Fase 5): idem ────────────────────────────────────
+    _migrate_chatbot_regras(engine)
 
     # Só faz sentido em PostgreSQL — SQLite é gerenciado pelo create_all
     if 'postgresql' not in str(engine.url):

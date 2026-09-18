@@ -83,6 +83,14 @@ class Driver(db.Model):
     validated = db.Column(db.Boolean, default=False)  # operator validated EMA data
     whatsapp_mode = db.Column(db.String(10), default='auto', server_default=db.text("'auto'"), nullable=False)
     whatsapp_assigned_to = db.Column(db.Integer, db.ForeignKey('users.id'))
+
+    # Chatbot de regras (Fase 5) — travas da reoferta. Ver
+    # atendimento_conversas/FASE5_CHATBOT.md, caminho [R].
+    # Acrescentadas por utils/migrations.py em bancos que já existem, onde
+    # entram NULL: o código trata NULL como "nunca ofertado", 0 e False.
+    bot_ultima_oferta_em  = db.Column(db.DateTime)
+    bot_ofertas_ignoradas = db.Column(db.Integer, default=0)
+    bot_pausado           = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
 
@@ -736,6 +744,12 @@ class DriverBid(db.Model):
     status          = db.Column(db.String(20), default='sent')
     driver_price    = db.Column(db.Numeric(10, 2))   # price the driver quoted
     driver_message  = db.Column(db.Text)              # last raw message from driver
+
+    # Fase 5: oferta nascida do chatbot, com o valor do frete fechado. O
+    # agente de negociação (process_bid_response) NÃO roda quando é True —
+    # pechinchar preço numa carga de valor fixo é justamente o que não pode
+    # acontecer. NULL, nas linhas antigas, vale False.
+    preco_fixo      = db.Column(db.Boolean, default=False)
     history         = db.Column(db.JSON, default=list)  # full conversation turns
     # Contracting Kanban: awaiting_response / conversation / interested /
     # validating / contracted / closed
@@ -953,3 +967,304 @@ class MessageAttachment(db.Model):
 
     def __repr__(self):
         return f'<MessageAttachment {self.id} msg={self.message_id} {self.status}>'
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Chatbot de regras — Fase 5
+#
+# Raiz "Oferta de frete por região". O desenho completo, com os textos das
+# mensagens e o porquê de cada decisão, está em
+# atendimento_conversas/FASE5_CHATBOT.md. Aqui fica só o formato dos dados.
+#
+# Todas as tabelas novas são criadas pelo db.create_all() nos dois bancos.
+# As colunas acrescentadas a tabelas que já existem (drivers, driver_bids)
+# passam por utils/migrations.py, que é o caminho portável.
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── Estados da raiz ─────────────────────────────────────────────────────────
+BOT_ESTADO_ENTRADA           = 'entrada'
+BOT_ESTADO_IDENTIFICACAO     = 'identificacao'
+# Coleta mínima NATIVA (nome + veículo + cidade/UF), por seleção de opções, sem
+# nenhum envolvimento do agente EMA. O atendente humano finaliza o cadastro
+# depois do handoff. Substitui a antiga ponte com o EMA ('coleta_ema').
+BOT_ESTADO_COLETA_MINIMA     = 'coleta_minima'
+BOT_ESTADO_VIAGEM_ATIVA      = 'viagem_ativa'
+BOT_ESTADO_GEOLOCALIZACAO    = 'geolocalizacao'
+BOT_ESTADO_BUSCA_FRETES      = 'busca_fretes'
+BOT_ESTADO_LISTA_FRETES      = 'lista_fretes'
+BOT_ESTADO_ESCOLHA           = 'escolha'
+BOT_ESTADO_CONFIRMACAO       = 'confirmacao'
+BOT_ESTADO_RESERVA           = 'reserva'
+BOT_ESTADO_ENCERRAMENTO      = 'encerramento'
+BOT_ESTADO_HANDOFF           = 'handoff'
+# Caminhos alternativos.
+BOT_ESTADO_SEM_REGIAO        = 'sem_regiao'
+BOT_ESTADO_MOTIVO_RECUSA     = 'motivo_recusa'
+BOT_ESTADO_ATUALIZAR_REGIOES = 'atualizar_regioes'
+BOT_ESTADO_REOFERTA          = 'reoferta'
+
+BOT_ESTADOS = (
+    BOT_ESTADO_ENTRADA, BOT_ESTADO_IDENTIFICACAO, BOT_ESTADO_COLETA_MINIMA,
+    BOT_ESTADO_VIAGEM_ATIVA, BOT_ESTADO_GEOLOCALIZACAO, BOT_ESTADO_BUSCA_FRETES,
+    BOT_ESTADO_LISTA_FRETES, BOT_ESTADO_ESCOLHA, BOT_ESTADO_CONFIRMACAO,
+    BOT_ESTADO_RESERVA, BOT_ESTADO_ENCERRAMENTO, BOT_ESTADO_HANDOFF,
+    BOT_ESTADO_SEM_REGIAO, BOT_ESTADO_MOTIVO_RECUSA,
+    BOT_ESTADO_ATUALIZAR_REGIOES, BOT_ESTADO_REOFERTA,
+)
+
+# ── Situação da sessão ──────────────────────────────────────────────────────
+BOT_SESSAO_ATIVA     = 'ativa'       # o bot conduz
+BOT_SESSAO_HANDOFF   = 'handoff'     # entregue a um atendente; o bot se calou
+BOT_SESSAO_ENCERRADA = 'encerrada'   # terminou sem handoff
+BOT_SESSAO_EXPIRADA  = 'expirada'    # 24h de silêncio
+BOT_SESSAO_OPTOUT    = 'optout'      # pediu para não receber mais
+
+# ── Origem da sessão (seção 1 do FASE5_CHATBOT.md) ──────────────────────────
+BOT_ORIGEM_CAMPANHA = 'campanha'   # número frio, da lista subida
+BOT_ORIGEM_REOFERTA = 'reoferta'   # motorista conhecido e livre, carga nova
+BOT_ORIGEM_PEDIDO   = 'pedido'     # o motorista mandou "CARGAS"
+
+
+class BotSession(db.Model):
+    """
+    Uma passagem de um telefone pela raiz do chatbot.
+
+    Tabela própria, e não um reaproveitamento de EmaSession: o driver_id de
+    lá é NOT NULL, e esta raiz começa justamente em números que ainda não têm
+    cadastro.
+
+    O estado NUNCA fica em memória do processo. O Procfile roda um worker só
+    hoje, mas a fila da Fase 2 já decide disputa no banco, e a máquina de
+    estados precisa da mesma garantia quando isso mudar.
+    """
+    __tablename__ = 'bot_sessoes'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Dígitos em E.164 sem o '+', por normalize_contact_key
+    # (atendimento_conversas/utils/phone.py). Nunca por normalize_phone, de
+    # evolution_api.py, que erra todo número de DDD 55.
+    telefone = db.Column(db.String(32), nullable=False, index=True)
+
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'), index=True)
+    # Nullable: só existe motorista depois da identificação.
+    driver_id   = db.Column(db.Integer, db.ForeignKey('drivers.id'), index=True)
+    campanha_id = db.Column(db.Integer, db.ForeignKey('bot_campanhas.id'), index=True)
+
+    origem          = db.Column(db.String(20), nullable=False,
+                                default=BOT_ORIGEM_CAMPANHA,
+                                server_default=db.text("'campanha'"))
+    estado          = db.Column(db.String(40), nullable=False,
+                                default=BOT_ESTADO_ENTRADA, index=True)
+    estado_anterior = db.Column(db.String(40))
+
+    # {uf, cidade, pagina, fretes_pagina: [ids], frete_escolhido_id,
+    #  ufs_interesse: [...]}. Os IDs da página ficam guardados de propósito:
+    # o motorista responde "2" pensando na lista que recebeu, e recalcular a
+    # busca faria o "2" virar outro frete.
+    contexto = db.Column(db.JSON, default=dict)
+
+    # [{estado, em}] — alimenta o checklist do handoff.
+    trilha = db.Column(db.JSON, default=list)
+
+    # Zerado a cada troca de estado. Na terceira resposta não entendida no
+    # mesmo estado, a sessão vai para handoff.
+    tentativas = db.Column(db.Integer, nullable=False, default=0)
+
+    status     = db.Column(db.String(20), nullable=False, default=BOT_SESSAO_ATIVA,
+                           server_default=db.text("'ativa'"), index=True)
+    motivo_fim = db.Column(db.String(60))
+
+    ultima_msg_em = db.Column(db.DateTime)   # última mensagem DO motorista
+    lembrete_em   = db.Column(db.DateTime)   # quando o lembrete de 1h saiu
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                           server_default=db.text('CURRENT_TIMESTAMP'))
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow,
+                           onupdate=datetime.utcnow)
+
+    driver       = db.relationship('Driver', backref='bot_sessoes')
+    conversation = db.relationship('Conversation', backref='bot_sessoes')
+
+    def __repr__(self):
+        return f'<BotSession {self.id} {self.telefone} {self.estado}/{self.status}>'
+
+
+# ── Campanha: a lista de telefones subida pelo operador ─────────────────────
+BOT_CAMPANHA_RASCUNHO  = 'rascunho'
+BOT_CAMPANHA_DISPARANDO = 'disparando'
+BOT_CAMPANHA_PAUSADA   = 'pausada'
+BOT_CAMPANHA_CONCLUIDA = 'concluida'
+
+
+class BotCampanha(db.Model):
+    """Um arquivo de telefones subido para o bot abordar."""
+    __tablename__ = 'bot_campanhas'
+
+    id       = db.Column(db.Integer, primary_key=True)
+    nome     = db.Column(db.String(200), nullable=False)
+    arquivo  = db.Column(db.String(300))
+
+    # Preenchidos na validação, antes de qualquer disparo: o operador vê o
+    # resumo e só então libera.
+    total      = db.Column(db.Integer, default=0)
+    validos    = db.Column(db.Integer, default=0)
+    invalidos  = db.Column(db.Integer, default=0)
+    duplicados = db.Column(db.Integer, default=0)
+
+    status = db.Column(db.String(20), nullable=False, default=BOT_CAMPANHA_RASCUNHO,
+                       server_default=db.text("'rascunho'"), index=True)
+
+    criado_por = db.Column(db.Integer, db.ForeignKey('users.id'))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                           server_default=db.text('CURRENT_TIMESTAMP'))
+
+    criador  = db.relationship('User', backref='bot_campanhas')
+    contatos = db.relationship('BotContato', backref='campanha', lazy='dynamic')
+
+    def __repr__(self):
+        return f'<BotCampanha {self.id} {self.nome} {self.status}>'
+
+
+BOT_CONTATO_PENDENTE  = 'pendente'
+BOT_CONTATO_ENVIADO   = 'enviado'
+BOT_CONTATO_RESPONDEU = 'respondeu'
+BOT_CONTATO_INVALIDO  = 'invalido'
+BOT_CONTATO_DUPLICADO = 'duplicado'
+BOT_CONTATO_OPTOUT    = 'optout'
+BOT_CONTATO_ERRO      = 'erro'
+
+
+class BotContato(db.Model):
+    """Uma linha da lista subida."""
+    __tablename__ = 'bot_contatos'
+
+    id          = db.Column(db.Integer, primary_key=True)
+    campanha_id = db.Column(db.Integer, db.ForeignKey('bot_campanhas.id'),
+                            nullable=False, index=True)
+
+    telefone_bruto = db.Column(db.String(60))   # como veio no arquivo
+    telefone       = db.Column(db.String(32), index=True)  # normalizado; NULL se inválido
+
+    status = db.Column(db.String(20), nullable=False, default=BOT_CONTATO_PENDENTE,
+                       server_default=db.text("'pendente'"), index=True)
+
+    # valor | destino | data | outro — por que recusou todas as cargas.
+    # Com preço fechado, é o único sinal que a operação recebe sobre a tabela
+    # de valores estar no mercado.
+    motivo_recusa = db.Column(db.String(20))
+
+    bot_session_id = db.Column(db.Integer, db.ForeignKey('bot_sessoes.id'))
+    erro           = db.Column(db.String(300))
+    enviado_em     = db.Column(db.DateTime)
+    created_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                               server_default=db.text('CURRENT_TIMESTAMP'))
+
+    sessao = db.relationship('BotSession', backref='contato')
+
+    def __repr__(self):
+        return f'<BotContato {self.id} {self.telefone} {self.status}>'
+
+
+# ── Reserva do frete: um titular e até dois de reserva ──────────────────────
+RESERVA_ATIVA      = 'ativa'        # relógio útil correndo
+RESERVA_EM_ANALISE = 'em_analise'   # na seguradora; relógio parado
+RESERVA_APROVADA   = 'aprovada'
+RESERVA_REPROVADA  = 'reprovada'
+RESERVA_DESISTIU   = 'desistiu'
+RESERVA_EXPIRADA   = 'expirada'
+
+RESERVA_OCUPANDO_VAGA = (RESERVA_ATIVA, RESERVA_EM_ANALISE, RESERVA_APROVADA)
+RESERVA_POSICOES = 3
+RESERVA_MINUTOS_LIMITE = 180   # 3 horas ÚTEIS
+
+
+class ReservaFrete(db.Model):
+    """
+    Posição de um motorista na fila de um frete: 1 é o titular, 2 e 3 são
+    reserva, para o caso de o titular não passar na verificação manual da
+    seguradora.
+
+    O relógio é de tempo ÚTIL, não de relógio de parede: ele para fora do
+    horário comercial e enquanto a seguradora analisa. Por isso não existe
+    um `expira_em` — um carimbo de data não sobrevive a duas pausas. A conta
+    é minutos_consumidos + minutos_úteis(contando_desde → agora).
+
+    Não há índice único em (freight_id, posicao): a garantia de não existirem
+    dois titulares vem do SELECT ... FOR UPDATE na linha do frete, o mesmo
+    padrão que a fila da Fase 2 usa em atendimento_conversas/utils/fila.py.
+    """
+    __tablename__ = 'bot_reservas_frete'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    freight_id = db.Column(db.Integer, db.ForeignKey('freights.id'),
+                           nullable=False, index=True)
+    driver_id  = db.Column(db.Integer, db.ForeignKey('drivers.id'),
+                           nullable=False, index=True)
+    bid_id     = db.Column(db.Integer, db.ForeignKey('driver_bids.id'))
+
+    posicao = db.Column(db.Integer, nullable=False)   # 1, 2 ou 3
+
+    status = db.Column(db.String(20), nullable=False, default=RESERVA_ATIVA,
+                       server_default=db.text("'ativa'"), index=True)
+    motivo = db.Column(db.String(300))
+
+    minutos_limite     = db.Column(db.Integer, nullable=False,
+                                   default=RESERVA_MINUTOS_LIMITE)
+    minutos_consumidos = db.Column(db.Integer, nullable=False, default=0)
+    # NULL = relógio parado (fora do horário comercial, ou em_analise).
+    contando_desde     = db.Column(db.DateTime)
+
+    criada_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                          server_default=db.text('CURRENT_TIMESTAMP'))
+    fechada_em = db.Column(db.DateTime)
+
+    freight = db.relationship('Freight', backref='reservas')
+    driver  = db.relationship('Driver', backref='reservas_frete')
+    bid     = db.relationship('DriverBid', backref='reserva')
+
+    def __repr__(self):
+        return (f'<ReservaFrete {self.id} frete={self.freight_id} '
+                f'pos={self.posicao} {self.status}>')
+
+
+class InteresseRegiao(db.Model):
+    """
+    "Me avisa quando aparecer carga aqui." É o que faz a reoferta existir:
+    sem isso, a raiz morre no fim da campanha.
+    """
+    __tablename__ = 'bot_interesses_regiao'
+
+    id        = db.Column(db.Integer, primary_key=True)
+    driver_id = db.Column(db.Integer, db.ForeignKey('drivers.id'),
+                          nullable=False, index=True)
+    uf     = db.Column(db.String(2), nullable=False, index=True)
+    cidade = db.Column(db.String(100))
+    ativo  = db.Column(db.Boolean, nullable=False, default=True,
+                       server_default=db.text('true'))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                           server_default=db.text('CURRENT_TIMESTAMP'))
+
+    driver = db.relationship('Driver', backref='interesses_regiao')
+
+    def __repr__(self):
+        return f'<InteresseRegiao {self.driver_id} {self.uf}>'
+
+
+class OptOut(db.Model):
+    """
+    Quem pediu para não receber mais mensagem. Checado ANTES do disparo, não
+    só durante a conversa: lista fria sem saída explícita vira denúncia, e o
+    WhatsApp da empresa é um número só.
+    """
+    __tablename__ = 'bot_optouts'
+
+    id       = db.Column(db.Integer, primary_key=True)
+    telefone = db.Column(db.String(32), nullable=False, unique=True, index=True)
+    origem   = db.Column(db.String(20))    # bot | atendente | manual
+    motivo   = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                           server_default=db.text('CURRENT_TIMESTAMP'))
+
+    def __repr__(self):
+        return f'<OptOut {self.telefone}>'

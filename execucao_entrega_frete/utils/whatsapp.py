@@ -1,94 +1,50 @@
-import requests
-import os
 import logging
 from infraestrutura_critica.models import WhatsAppMessage
 from infraestrutura_critica.app import db
 from datetime import datetime
 
-def send_freight_offer(freight, driver):
-    """Send WhatsApp message with freight offer to driver"""
-    try:
-        api_url = os.environ.get('WHATSAPP_API_URL', '')
-        api_token = os.environ.get('WHATSAPP_API_TOKEN', '')
+def send_freight_offer(freight, driver, created_by=None, message_content=None):
+    """Envia a oferta de frete ao motorista pelo WhatsApp.
 
-        if not api_url or not api_token:
-            # If WhatsApp API is not configured, just log the message
-            logging.warning("WhatsApp API not configured. Message would be sent to driver.")
-            message_content = generate_freight_message(freight, driver)
+    O transporte é a Evolution, o mesmo canal da EMA e da consulta de preço.
+    Até 17/09/2026 esta função falava com um `WHATSAPP_API_URL` que nunca
+    existiu no ambiente: sem essas variáveis ela gravava a mensagem como
+    `enviado` e devolvia `True`, e o operador via "oferta enviada" sem que
+    nada saísse do servidor.
 
-            # Save message record
-            whatsapp_msg = WhatsAppMessage(
-                freight_id=freight.id,
-                driver_id=driver.id,
-                message_content=message_content,
-                phone_number=driver.phone,
-                status='enviado'  # Mark as sent since we're simulating
-            )
-            db.session.add(whatsapp_msg)
-            db.session.commit()
+    Grava a `WhatsAppMessage` mas **não** faz commit: quem chama fecha a
+    transação junto com a `DriverBid` correspondente. `message_content`
+    evita gerar o mesmo texto duas vezes quando quem chama já precisa dele.
 
-            logging.info(f"WhatsApp message logged for {driver.name} ({driver.phone}): {message_content}")
-            return True
+    Retorna `True` só quando a Evolution aceitou o envio.
+    """
+    from infraestrutura_critica.utils.evolution_api import send_text
 
-        # Generate message content
+    if message_content is None:
         message_content = generate_freight_message(freight, driver)
 
-        # Format phone number (remove special characters)
-        phone = driver.phone.replace('(', '').replace(')', '').replace('-', '').replace(' ', '')
-        if not phone.startswith('55'):
-            phone = '55' + phone
-
-        # Prepare API request
-        payload = {
-            'phone': phone,
-            'message': message_content
-        }
-
-        headers = {
-            'Authorization': f'Bearer {api_token}',
-            'Content-Type': 'application/json'
-        }
-
-        # Send request
-        response = requests.post(f"{api_url}/send-message", json=payload, headers=headers, timeout=30)
-
-        # Save message record
-        whatsapp_msg = WhatsAppMessage(
-            freight_id=freight.id,
-            driver_id=driver.id,
-            message_content=message_content,
-            phone_number=driver.phone,
-            status='enviado' if response.status_code == 200 else 'erro'
-        )
-
-        if response.status_code == 200:
-            whatsapp_msg.delivered_at = datetime.utcnow()
-
-        db.session.add(whatsapp_msg)
-        db.session.commit()
-
-        if response.status_code == 200:
-            logging.info(f"WhatsApp message sent successfully to {driver.name}")
-            return True
-        else:
-            logging.error(f"Failed to send WhatsApp message: {response.text}")
-            return False
-
+    try:
+        ok = send_text(driver.phone, message_content)
     except Exception as e:
-        logging.error(f"Error sending WhatsApp message: {str(e)}")
+        logging.error(f"Erro ao enviar oferta de frete para {driver.name}: {e}")
+        ok = False
 
-        # Save error record
-        whatsapp_msg = WhatsAppMessage(
-            freight_id=freight.id,
-            driver_id=driver.id,
-            message_content=generate_freight_message(freight, driver),
-            phone_number=driver.phone,
-            status='erro'
-        )
-        db.session.add(whatsapp_msg)
-        db.session.commit()
+    db.session.add(WhatsAppMessage(
+        freight_id=freight.id,
+        driver_id=driver.id,
+        message_content=message_content,
+        phone_number=driver.phone,
+        direction='outbound',
+        source='freight',
+        status='enviado' if ok else 'erro',
+        created_by=created_by,
+    ))
 
-        return False
+    if ok:
+        logging.info(f"Oferta de frete {freight.freight_number} enviada para {driver.name}")
+    else:
+        logging.error(f"Falha ao enviar oferta de frete {freight.freight_number} para {driver.name}")
+    return ok
 
 def generate_freight_message(freight, driver):
     """Generate WhatsApp message content for freight offer"""
@@ -211,36 +167,12 @@ EMALOG - Conectando você aos melhores fretes! 🚚
     return template
 
 def send_custom_message(phone, message):
-    """Send custom WhatsApp message"""
+    """Envia uma mensagem avulsa pelo WhatsApp, pela Evolution."""
+    from infraestrutura_critica.utils.evolution_api import send_text
     try:
-        api_url = os.environ.get('WHATSAPP_API_URL', '')
-        api_token = os.environ.get('WHATSAPP_API_TOKEN', '')
-
-        if not api_url or not api_token:
-            logging.warning("WhatsApp API not configured.")
-            return False
-
-        # Format phone number
-        phone = phone.replace('(', '').replace(')', '').replace('-', '').replace(' ', '')
-        if not phone.startswith('55'):
-            phone = '55' + phone
-
-        payload = {
-            'phone': phone,
-            'message': message
-        }
-
-        headers = {
-            'Authorization': f'Bearer {api_token}',
-            'Content-Type': 'application/json'
-        }
-
-        response = requests.post(f"{api_url}/send-message", json=payload, headers=headers, timeout=30)
-
-        return response.status_code == 200
-
+        return send_text(phone, message)
     except Exception as e:
-        logging.error(f"Error sending custom WhatsApp message: {str(e)}")
+        logging.error(f"Erro ao enviar mensagem avulsa para {phone}: {e}")
         return False
 
 def process_whatsapp_response(phone, message, freight_id=None):
